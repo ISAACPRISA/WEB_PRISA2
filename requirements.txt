@@ -5,3 +5,4 @@ folium
 streamlit
 requests
 beautifulsoup4
+openpyxl
