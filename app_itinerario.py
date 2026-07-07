@@ -339,6 +339,19 @@ with col_logo:
 
 precio_regular_jalisco = extraer_precio_gasolina_real()
 
+    # Creando un archivo de texto con formato de coordenadas básico o usando simplekml
+    # Supongamos que guardas tus puntos en un formato CSV o KML:
+with open("ruta_del_dia.kml", "w") as f:
+        # Código para estructurar tu KML...
+ pass
+
+    # Botón de descarga en Streamlit
+st.download_button(
+        label="📥 Descargar ruta para Google Maps (KML)",
+        data=open("ruta_del_dia.kml", "rb"),
+ file_name="ruta_del_dia.kml",
+ mime="application/vnd.google-earth.kml+xml"
+
 # --- PANEL SIDEBAR DE CARGA COMPLETO ---
 st.sidebar.header("📥 Entrada de Archivos")
 file_clientes = st.sidebar.file_uploader("Base de Clientes (.xlsx)", type=["xlsx"])
@@ -583,17 +596,5 @@ if file_clientes and file_vendedores:
             height=400, use_container_width=True, hide_index=True
         )
 else:
-     # Creando un archivo de texto con formato de coordenadas básico o usando simplekml
-    # Supongamos que guardas tus puntos en un formato CSV o KML:
-    with open("ruta_del_dia.kml", "w") as f:
-        # Código para estructurar tu KML...
-        pass
-
-    # Botón de descarga en Streamlit
-    st.download_button(
-        label="📥 Descargar ruta para Google Maps (KML)",
-        data=open("ruta_del_dia.kml", "rb"),
-        file_name="ruta_del_dia.kml",
-        mime="application/vnd.google-earth.kml+xml"
     )
     st.info("Por favor, cargue las bases maestras en el panel lateral para iniciar la suite.")
