@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, date
 import calendar
 import re
 import os
+import urllib.parse 
 
 # =============================================================================
 # 0. CONFIGURACIÓN DE APIS Y EXTRACCIÓN DE GASOLINA (CACHÉ 24 HORAS)
@@ -16,7 +17,28 @@ import os
 MAPBOX_TOKEN = "pk.eyJ1Ijoia2FyZW5tYWNpYXMxIiwiYSI6ImNtcWlma2pzODA2bW4ycG9hdjI0MjBiZ20ifQ.7NURZ9JkaPZ49hWRhfSDOg" 
 MAPBOX_STYLE = "streets-v12" 
 
-@st.cache_data(ttl=86400)  
+@st.cache_data(ttl=86400) 
+
+#GOOGLE MAPS
+ # 👈 Asegúrate de que esta línea esté aquí también
+
+def generar_link_google_maps(lista_coordenadas):
+    if not lista_coordenadas or len(lista_coordenadas) == 0:
+        return "#"
+    
+    # Tomamos el primer punto como origen y el último como destino
+    origen = f"{lista_coordenadas[0][0]},{lista_coordenadas[0][1]}"
+    destino = f"{lista_coordenadas[-1][0]},{lista_coordenadas[-1][1]}"
+    
+    # Si hay paradas intermedias, las unimos con una barra "|"
+    if len(lista_coordenadas) > 2:
+        intermedios = [f"{lat},{lon}" for lat, lon in lista_coordenadas[1:-1]]
+        waypoints = "|".join(intermedios)
+        url = f"https://www.google.com/maps/dir/?api=1&origin={origen}&destination={destino}&waypoints={urllib.parse.quote(waypoints)}&travelmode=driving"
+    else:
+        url = f"https://www.google.com/maps/dir/?api=1&origin={origen}&destination={destino}&travelmode=driving"
+        
+    return url
 def extraer_precio_gasolina_real():
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
