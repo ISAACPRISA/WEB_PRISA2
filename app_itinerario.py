@@ -546,7 +546,18 @@ if file_clientes and file_vendedores:
                     folium.PolyLine(camino_vial, color="#1A73E8", weight=6, opacity=0.85).add_to(m)
                 
                 st.components.v1.html(m._repr_html_(), height=540, scrolling=False)
-                
+
+            if not es_dia_vacio and len(puntos_circuito) > 1:
+                    # Generamos el link enviándole la lista 'puntos_circuito'
+                    link_maps = generar_link_google_maps(puntos_circuito)
+                    
+                    # Desplegamos el botón interactivo justo debajo del mapa
+                    st.link_button(
+                        label="🗺️ Abrir ruta completa en Google Maps",
+                        url=link_maps,
+                        use_container_width=True
+                    )
+                # ==========================================
             # --- SECCIÓN INTERACTIVA: NUEVA TABLA PROSPECTOS CON PINTADO DE RENGLÓN ROSA ---
             st.markdown("---")
             st.subheader(f"💼 Tabla de Prospectos Comerciales dentro de la zona de cobertura (≤ 2 Km de la Ruta)")
