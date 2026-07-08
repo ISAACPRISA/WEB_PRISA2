@@ -20,8 +20,6 @@ MAPBOX_STYLE = "streets-v12"
 @st.cache_data(ttl=86400) 
 
 #GOOGLE MAPS
- # 👈 Asegúrate de que esta línea esté aquí también
-
 def generar_link_google_maps(lista_coordenadas):
     if not lista_coordenadas or len(lista_coordenadas) == 0:
         return "#"
