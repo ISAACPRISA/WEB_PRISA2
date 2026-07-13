@@ -353,7 +353,7 @@ with col_titulo:
     st.title("Agenda sugerida para planeación de rutas y consideración de Prospectos")
 with col_logo:
     try:
-        st.image(r"C:\\Users\\lmacias\\Desktop\\ARCHIVOS\\ARCHIVOS 2025 & 2026\\IMAGENES\\Logo_PRISA.png", width=640)
+        st.image(Logo_PRISA.png", width=640)
     except:
         st.markdown("<p style='text-align: right; color: gray; font-size: 12px;'>[ Logo Empresa ]</p>", unsafe_allow_html=True)
 
