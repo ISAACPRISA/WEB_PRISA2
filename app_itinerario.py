@@ -399,7 +399,8 @@ def generar_agenda_dinamica(vendedor_id, df_clientes, df_vendedores, anio, mes):
 # =============================================================================
 def procesar_pedido_sugerido(
     id_vendedor,
-    fecha_evaluada,
+    mes_evaluado,
+    anio_evaluado,
     df_agenda_vendedor,
     f_ranking,
     f_ventas,
@@ -510,8 +511,8 @@ def procesar_pedido_sugerido(
         if "Codigo de Producto" in df_demanda.columns:
             df_demanda["Codigo de Producto"] = df_demanda["Codigo de Producto"].astype(str).str.strip()
 
-        dt_eval = pd.to_datetime(fecha_evaluada)
-        mes_actual, anio_actual = dt_eval.month, dt_eval.year
+        mes_actual = int(mes_evaluado)
+        anio_actual = int(anio_evaluado)
 
         def restar_meses(m, a, n):
             m_res, a_res = m - n, a
@@ -1010,18 +1011,29 @@ if df_cl is not None and df_vn is not None:
                 )
 
     # -------------------------------------------------------------------------
-    # SEGUNDA PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS (DESVINCULADA DE LA PESTAÑA 1)
+    # SEGUNDA PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS (EVALUACIÓN POR MES Y AÑO)
     # -------------------------------------------------------------------------
     with tab_sugerido:
         st.header("📊 Módulo de Pedido Sugerido por Marca")
 
-        # Filtro propio e independiente de fecha
-        c_sug1, c_sug2 = st.columns([0.4, 0.6])
+        # Filtro propio e independiente de Mes y Año a evaluar
+        c_sug1, c_sug2, c_sug3 = st.columns([0.3, 0.2, 0.5])
         with c_sug1:
-            fecha_eval_sug = st.date_input(
-                "Seleccione Fecha para evaluar Pedido Sugerido:",
-                value=date(anio_seleccionado, mes_numerico, 1),
-                key="fecha_sug_input_independiente"
+            mes_eval_tupla = st.selectbox(
+                "Seleccione Mes para evaluar Pedido Sugerido:",
+                lista_meses,
+                index=mes_numerico - 1,
+                format_func=lambda x: x[0],
+                key="mes_sug_input_independiente"
+            )
+            mes_eval_num = mes_eval_tupla[1]
+
+        with c_sug2:
+            anio_eval_num = st.selectbox(
+                "Año a evaluar:",
+                lista_anios,
+                index=lista_anios.index(anio_seleccionado) if anio_seleccionado in lista_anios else 0,
+                key="anio_sug_input_independiente"
             )
 
         # Se cargan TODOS los clientes del vendedor para el mes activo
@@ -1035,9 +1047,9 @@ if df_cl is not None and df_vn is not None:
             for _, r_cl in cls_unicos.iterrows():
                 opciones_clientes.append(f"{r_cl['ID_Cliente']} - {r_cl['Cliente']}")
 
-        with c_sug2:
+        with c_sug3:
             cliente_sel_sug = st.selectbox(
-                f"Seleccione Cliente Agendado en {mes_nombre} (o Evalúe Todos):", 
+                f"Seleccione Cliente Agendado en {mes_eval_tupla[0]} (o Evalúe Todos):", 
                 ["TODOS"] + sorted(opciones_clientes),
                 key="cliente_sug_input_independiente"
             )
@@ -1051,7 +1063,8 @@ if df_cl is not None and df_vn is not None:
 
             res_dict, err_msg, anio_extraido = procesar_pedido_sugerido(
                 id_vendedor=id_vendedor,
-                fecha_evaluada=fecha_eval_sug,
+                mes_evaluado=mes_eval_num,
+                anio_evaluado=anio_eval_num,
                 df_agenda_vendedor=df_agenda_mes,
                 f_ranking=URL_RANKING_FERRETEROS,
                 f_ventas=URL_VENTAS_FERRETEROS,
