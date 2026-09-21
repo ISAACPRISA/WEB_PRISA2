@@ -3,6 +3,7 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 import folium
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, date
@@ -47,7 +48,6 @@ VENDEDORES_AUTORIZADOS = [
 ]
 
 @st.cache_data(ttl=86400)  
-
 def generar_link_google_maps(lista_coordenadas):
     if not lista_coordenadas or len(lista_coordenadas) == 0:
         return "#"
@@ -718,6 +718,7 @@ def obtener_ruta_calles_osrm(puntos):
 # =============================================================================
 st.set_page_config(layout="wide")
 
+# Estilos CSS generales y reglas específicas para IMPRESIÓN PDF
 st.markdown("""
     <style>
     th[role="columnheader"] div {
@@ -729,6 +730,28 @@ st.markdown("""
     }
     th[role="columnheader"] {
         vertical-align: bottom !important;
+    }
+    
+    /* Configuración para la exportación/impresión a PDF */
+    @media print {
+        section[data-testid="stSidebar"], 
+        header, 
+        footer, 
+        .stButton, 
+        .no-print {
+            display: none !important;
+        }
+        .main .block-container {
+            max-width: 100% !important;
+            padding: 0 !important;
+        }
+        div[data-testid="stExpander"] {
+            display: block !important;
+            border: 1px solid #ccc !important;
+        }
+        div[data-testid="stExpander"] > div[role="button"] {
+            pointer-events: none;
+        }
     }
     </style>
 """, unsafe_allow_html=True)
@@ -767,7 +790,7 @@ if df_cl is not None and df_vn is not None:
     id_vendedor = vendedor_seleccionado.split(" - ")[0].strip().split(".")[0]
     df_agenda_mes, inicio_coords, df_universo = generar_agenda_dinamica(id_vendedor, df_cl, df_vn, anio_seleccionado, mes_numerico)
     
-    # Pestañas principales
+    # Pestañas principales (Totalmente desvinculadas)
     tab_rutas, tab_sugerido, tab_prospectos_sug = st.tabs([
         "🗺️ Rutas y Logística", 
         "📊 Pedido Sugerido y Análisis", 
@@ -800,7 +823,8 @@ if df_cl is not None and df_vn is not None:
                     "Seleccione fecha para evaluar ruta:",
                     value=date(anio_seleccionado, mes_numerico, 1),
                     min_value=date(anio_seleccionado, mes_numerico, 1),
-                    max_value=date(anio_seleccionado, mes_numerico, calendar.monthrange(anio_seleccionado, mes_numerico)[1])
+                    max_value=date(anio_seleccionado, mes_numerico, calendar.monthrange(anio_seleccionado, mes_numerico)[1]),
+                    key="fecha_ruta_input"
                 )
                 
             if id_buscado:
@@ -998,16 +1022,19 @@ if df_cl is not None and df_vn is not None:
                 )
 
     # -------------------------------------------------------------------------
-    # SEGUNDA PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS (SIN MAPA)
+    # SEGUNDA PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS (DESVINCULADA DE LA PESTAÑA 1)
     # -------------------------------------------------------------------------
     with tab_sugerido:
         st.header("📊 Módulo de Pedido Sugerido por Marca")
 
-        fecha_eval_sug = st.date_input(
-            "Seleccione Fecha para evaluar Pedido Sugerido del cliente:",
-            value=date(anio_seleccionado, mes_numerico, 1),
-            key="fecha_sug_input"
-        )
+        # Filtro propio e independiente de fecha
+        c_sug1, c_sug2 = st.columns([0.4, 0.6])
+        with c_sug1:
+            fecha_eval_sug = st.date_input(
+                "Seleccione Fecha para evaluar Pedido Sugerido:",
+                value=date(anio_seleccionado, mes_numerico, 1),
+                key="fecha_sug_input_independiente"
+            )
 
         df_ag_dia = df_agenda_mes[df_agenda_mes['Fecha_Raw'] == fecha_eval_sug] if df_agenda_mes is not None and not df_agenda_mes.empty else pd.DataFrame()
         
@@ -1017,9 +1044,18 @@ if df_cl is not None and df_vn is not None:
             for _, r_cl in cls_unicos.iterrows():
                 opciones_clientes.append(f"{r_cl['ID_Cliente']} - {r_cl['Cliente']}")
 
-        cliente_sel_sug = st.selectbox("Filtrar Pedido por Cliente Agendado Hoy:", ["TODOS"] + opciones_clientes)
+        with c_sug2:
+            cliente_sel_sug = st.selectbox(
+                "Seleccione Cliente Agendado (o Evalué Todos):", 
+                ["TODOS"] + opciones_clientes,
+                key="cliente_sug_input_independiente"
+            )
 
-        if st.button("🚀 Generar Análisis y Pedido Sugerido"):
+        col_btn1, col_btn2 = st.columns([0.3, 0.7])
+        with col_btn1:
+            btn_generar = st.button("🚀 Generar Análisis y Pedido Sugerido", use_container_width=True)
+
+        if btn_generar:
             cl_id_pass = None if cliente_sel_sug == "TODOS" else cliente_sel_sug.split(" - ")[0]
 
             res_dict, err_msg, anio_extraido = procesar_pedido_sugerido(
@@ -1036,60 +1072,84 @@ if df_cl is not None and df_vn is not None:
             if err_msg:
                 st.error(err_msg)
             else:
+                st.session_state["res_dict_sugerido"] = res_dict
                 st.success("Cálculo finalizado exitosamente.")
 
-                config_cols_sugerido = {
-                    "Marca": st.column_config.TextColumn("Marca", width="medium"),
-                    "Código de Producto": st.column_config.TextColumn("Código de Producto", width="small"),
-                    "DESCRIPCIÓN": st.column_config.TextColumn("DESCRIPCIÓN", width="large"),
-                    "Sugerido": st.column_config.NumberColumn("Sugerido", width="small", format="%d"),
-                    "Avance": st.column_config.NumberColumn("Avance", width="small", format="%d"),
-                    "Indicador": st.column_config.TextColumn("Indicador", width="small"),
-                    "Ultimo mes de Venta": st.column_config.TextColumn("Ultimo mes de Venta", width="small"),
-                }
+        # Si existen datos calculados en la sesión, los mostramos
+        if "res_dict_sugerido" in st.session_state:
+            res_dict = st.session_state["res_dict_sugerido"]
 
-                cols_visibles = [
-                    "Marca", "Código de Producto", "DESCRIPCIÓN", 
-                    "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"
-                ]
+            # BOTÓN DE IMPRESIÓN A PDF
+            st.markdown("---")
+            components.html("""
+                <div style="text-align: right; margin-bottom: 10px;">
+                    <button onclick="window.print()" style="
+                        background-color: #FF4B4B;
+                        color: white;
+                        border: none;
+                        padding: 10px 20px;
+                        font-size: 16px;
+                        font-weight: bold;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
+                        🖨️ IMPRIMIR TODAS LAS TABLAS DEL SUGERIDO (PDF)
+                    </button>
+                </div>
+            """, height=60)
 
-                def desplegar_tabla_desagrupada(df_datos, titulo_seccion):
-                    st.subheader(titulo_seccion)
-                    if df_datos.empty:
-                        st.info("No hay registros disponibles para esta categoría.")
-                        return
+            config_cols_sugerido = {
+                "Marca": st.column_config.TextColumn("Marca", width="medium"),
+                "Código de Producto": st.column_config.TextColumn("Código de Producto", width="small"),
+                "DESCRIPCIÓN": st.column_config.TextColumn("DESCRIPCIÓN", width="large"),
+                "Sugerido": st.column_config.NumberColumn("Sugerido", width="small", format="%d"),
+                "Avance": st.column_config.NumberColumn("Avance", width="small", format="%d"),
+                "Indicador": st.column_config.TextColumn("Indicador", width="small"),
+                "Ultimo mes de Venta": st.column_config.TextColumn("Ultimo mes de Venta", width="small"),
+            }
+
+            cols_visibles = [
+                "Marca", "Código de Producto", "DESCRIPCIÓN", 
+                "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"
+            ]
+
+            def desplegar_tabla_desagrupada(df_datos, titulo_seccion):
+                st.subheader(titulo_seccion)
+                if df_datos.empty:
+                    st.info("No hay registros disponibles para esta categoría.")
+                    return
+                
+                cols_a_mostrar = [c for c in cols_visibles if c in df_datos.columns]
+                st.dataframe(
+                    df_datos[cols_a_mostrar], 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    column_config=config_cols_sugerido
+                )
+
+            def desplegar_tabla_agrupada_por_marca(df_datos, titulo_seccion):
+                st.subheader(titulo_seccion)
+                if df_datos.empty:
+                    st.info("No hay registros disponibles para esta categoría.")
+                    return
+                
+                marcas = df_datos["Marca"].unique()
+                for m in marcas:
+                    df_m = df_datos[df_datos["Marca"] == m]
+                    cols_a_mostrar = [c for c in cols_visibles if c in df_m.columns]
                     
-                    cols_a_mostrar = [c for c in cols_visibles if c in df_datos.columns]
-                    st.dataframe(
-                        df_datos[cols_a_mostrar], 
-                        use_container_width=True, 
-                        hide_index=True, 
-                        column_config=config_cols_sugerido
-                    )
+                    with st.expander(f"📌 **Marca: {m}** ({len(df_m)} productos)", expanded=True):
+                        st.dataframe(
+                            df_m[cols_a_mostrar], 
+                            use_container_width=True, 
+                            hide_index=True, 
+                            column_config=config_cols_sugerido
+                        )
 
-                def desplegar_tabla_agrupada_por_marca(df_datos, titulo_seccion):
-                    st.subheader(titulo_seccion)
-                    if df_datos.empty:
-                        st.info("No hay registros disponibles para esta categoría.")
-                        return
-                    
-                    marcas = df_datos["Marca"].unique()
-                    for m in marcas:
-                        df_m = df_datos[df_datos["Marca"] == m]
-                        cols_a_mostrar = [c for c in cols_visibles if c in df_m.columns]
-                        
-                        with st.expander(f"📌 **Marca: {m}** ({len(df_m)} productos)"):
-                            st.dataframe(
-                                df_m[cols_a_mostrar], 
-                                use_container_width=True, 
-                                hide_index=True, 
-                                column_config=config_cols_sugerido
-                            )
-
-                desplegar_tabla_desagrupada(res_dict["pedido"], "PEDIDO SUGERIDO (TUS PRODUCTOS MÁS VENDIDOS 80/20)")
-                desplegar_tabla_desagrupada(res_dict["intermitente"], "PRODUCTOS CON VENTA INTERMITENTE")
-                desplegar_tabla_desagrupada(res_dict["recuperar_20"], "PRODUCTOS A RECUPERAR 20%")
-                desplegar_tabla_agrupada_por_marca(res_dict["oportunidades"], "OPORTUNIDADES (PRODUCTOS DE CANAL)")
+            desplegar_tabla_desagrupada(res_dict["pedido"], "1. PEDIDO SUGERIDO (TUS PRODUCTOS MÁS VENDIDOS 80/20)")
+            desplegar_tabla_desagrupada(res_dict["intermitente"], "2. PRODUCTOS CON VENTA INTERMITENTE")
+            desplegar_tabla_desagrupada(res_dict["recuperar_20"], "3. PRODUCTOS A RECUPERAR 20%")
+            desplegar_tabla_agrupada_por_marca(res_dict["oportunidades"], "4. OPORTUNIDADES (PRODUCTOS DE CANAL)")
 
     # -------------------------------------------------------------------------
     # TERCERA PESTAÑA: PEDIDO SUGERIDO CLIENTES NUEVOS (SIN MAPA)
@@ -1129,7 +1189,6 @@ if df_cl is not None and df_vn is not None:
 
                 cols_numericas = df_prospectos_sug.select_dtypes(include=[np.number]).columns.tolist()
                 
-                # Renderizado limpio sin mapa
                 styler = df_prospectos_sug.style
                 if hasattr(styler, 'map'):
                     df_pros_styled = styler.map(aplicar_resaltado_verde_celda, subset=cols_numericas) if cols_numericas else df_prospectos_sug
