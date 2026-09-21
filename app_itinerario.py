@@ -1027,22 +1027,14 @@ if df_cl is not None and df_vn is not None:
     with tab_sugerido:
         st.header("📊 Módulo de Pedido Sugerido por Marca")
 
-        # Filtro propio e independiente de mes
+        # Filtro propio e independiente de fecha
         c_sug1, c_sug2 = st.columns([0.4, 0.6])
         with c_sug1:
-            meses_dict = {
-                "Enero": 1, "Febrero": 2, "Marzo": 3, "Abril": 4, 
-                "Mayo": 5, "Junio": 6, "Julio": 7, "Agosto": 8, 
-                "Septiembre": 9, "Octubre": 10, "Noviembre": 11, "Diciembre": 12
-            }
-            mes_sug_nombre = st.selectbox(
-                "Seleccione el Mes a evaluar:",
-                options=list(meses_dict.keys()),
-                index=mes_numerico - 1,
-                key="mes_sug_input_independiente"
+            fecha_eval_sug = st.date_input(
+                "Seleccione Fecha para evaluar Pedido Sugerido:",
+                value=date(anio_seleccionado, mes_numerico, 1),
+                key="fecha_sug_input_independiente"
             )
-            num_mes_sel = meses_dict[mes_sug_nombre]
-            fecha_eval_sug = date(anio_seleccionado, num_mes_sel, 1)
 
         df_ag_dia = df_agenda_mes[df_agenda_mes['Fecha_Raw'] == fecha_eval_sug] if df_agenda_mes is not None and not df_agenda_mes.empty else pd.DataFrame()
         
