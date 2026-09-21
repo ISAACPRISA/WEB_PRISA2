@@ -48,8 +48,6 @@ VENDEDORES_AUTORIZADOS = [
 
 @st.cache_data(ttl=86400)  
 
-#_____________________________________________________________________________________________________________
-#GOOGLE MAPS
 def generar_link_google_maps(lista_coordenadas):
     if not lista_coordenadas or len(lista_coordenadas) == 0:
         return "#"
@@ -65,8 +63,6 @@ def generar_link_google_maps(lista_coordenadas):
         url = f"https://www.google.com/maps/dir/?api=1&origin={origen}&destination={destino}&travelmode=driving"
         
     return url
-
-#_________________________________________________________________________________________________________________________
 
 def extraer_precio_gasolina_real():
     try:
@@ -778,6 +774,9 @@ if df_cl is not None and df_vn is not None:
         "✨ Pedido Sugerido Clientes Nuevos"
     ])
     
+    # -------------------------------------------------------------------------
+    # PRIMERA PESTAÑA: MAPA Y RUTAS
+    # -------------------------------------------------------------------------
     with tab_rutas:
         if df_agenda_mes is not None and not df_agenda_mes.empty:
             st.markdown("---")
@@ -998,7 +997,9 @@ if df_cl is not None and df_vn is not None:
                     use_container_width=True
                 )
 
-    # --- PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS ---
+    # -------------------------------------------------------------------------
+    # SEGUNDA PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS (SIN MAPA)
+    # -------------------------------------------------------------------------
     with tab_sugerido:
         st.header("📊 Módulo de Pedido Sugerido por Marca")
 
@@ -1090,11 +1091,17 @@ if df_cl is not None and df_vn is not None:
                 desplegar_tabla_desagrupada(res_dict["recuperar_20"], "PRODUCTOS A RECUPERAR 20%")
                 desplegar_tabla_agrupada_por_marca(res_dict["oportunidades"], "OPORTUNIDADES (PRODUCTOS DE CANAL)")
 
-    # --- PESTAÑA: PEDIDO SUGERIDO CLIENTES NUEVOS ---
+    # -------------------------------------------------------------------------
+    # TERCERA PESTAÑA: PEDIDO SUGERIDO CLIENTES NUEVOS (SIN MAPA)
+    # -------------------------------------------------------------------------
     with tab_prospectos_sug:
         st.header("✨ Pedido Sugerido Clientes Nuevos")
         
-        df_prospectos_sug = cargar_dataframe_flexible(URL_PEDIDO_SUGERIDO_PROSPECTOS, nombre_defecto="PEDIDO SUGERIDO PROSPECTOS.xlsx", sheet_name="SUGERIDO FINAL")
+        df_prospectos_sug = cargar_dataframe_flexible(
+            URL_PEDIDO_SUGERIDO_PROSPECTOS, 
+            nombre_defecto="PEDIDO SUGERIDO PROSPECTOS.xlsx", 
+            sheet_name="SUGERIDO FINAL"
+        )
         
         if df_prospectos_sug is not None and not df_prospectos_sug.empty:
             try:
@@ -1121,7 +1128,13 @@ if df_cl is not None and df_vn is not None:
                     return ''
 
                 cols_numericas = df_prospectos_sug.select_dtypes(include=[np.number]).columns.tolist()
-                df_pros_styled = df_prospectos_sug.style.applymap(aplicar_resaltado_verde_celda, subset=cols_numericas) if cols_numericas else df_prospectos_sug
+                
+                # Renderizado limpio sin mapa
+                styler = df_prospectos_sug.style
+                if hasattr(styler, 'map'):
+                    df_pros_styled = styler.map(aplicar_resaltado_verde_celda, subset=cols_numericas) if cols_numericas else df_prospectos_sug
+                else:
+                    df_pros_styled = styler.applymap(aplicar_resaltado_verde_celda, subset=cols_numericas) if cols_numericas else df_prospectos_sug
 
                 st.dataframe(df_pros_styled, use_container_width=True, hide_index=True)
 
