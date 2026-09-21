@@ -54,11 +54,9 @@ def generar_link_google_maps(lista_coordenadas):
     if not lista_coordenadas or len(lista_coordenadas) == 0:
         return "#"
     
-    # Tomamos el primer punto como origen y el último como destino
     origen = f"{lista_coordenadas[0][0]},{lista_coordenadas[0][1]}"
     destino = f"{lista_coordenadas[-1][0]},{lista_coordenadas[-1][1]}"
     
-    # Si hay paradas intermedias, las unimos con una barra "|"
     if len(lista_coordenadas) > 2:
         intermedios = [f"{lat},{lon}" for lat, lon in lista_coordenadas[1:-1]]
         waypoints = "|".join(intermedios)
@@ -750,22 +748,8 @@ with col_logo:
 
 precio_regular_jalisco = extraer_precio_gasolina_real()
 
-# --- PANEL SIDEBAR ---
-st.sidebar.header("📥 Entrada de Archivos Rutas")
-file_clientes = st.sidebar.file_uploader("Base de Clientes (.xlsx)", type=["xlsx"])
-file_vendedores = st.sidebar.file_uploader("Base de Vendedores (.xlsx)", type=["xlsx"])
-file_prospectos = st.sidebar.file_uploader("Base de Prospectos (.xlsx)", type=["xlsx"])
-
-st.sidebar.markdown("---")
-st.sidebar.header("📂 Archivos Módulo Pedido Sugerido")
-f_ranking = st.sidebar.file_uploader("RANKING FERRETEROS (.xlsx)", type=["xlsx"], key="f_rk")
-f_ventas = st.sidebar.file_uploader("VENTAS FERRETEROS (.xlsx)", type=["xlsx"], key="f_vt")
-f_demanda = st.sidebar.file_uploader("Demanda (.xlsx)", type=["xlsx"], key="f_dm")
-f_master = st.sidebar.file_uploader("MASTER DE CLIENTES (.xlsx)", type=["xlsx"], key="f_ms")
-f_sug_prospectos = st.sidebar.file_uploader("PEDIDO SUGERIDO PROSPECTOS (.xlsx)", type=["xlsx"], key="f_sp")
-
-st.sidebar.markdown("---")
-st.sidebar.header("📅 Calendario")
+# --- PANEL SIDEBAR SIMPLIFICADO ---
+st.sidebar.header("📅 Calendario Operativo")
 lista_anios = [2026, 2027, 2028, 2029, 2030]
 anio_seleccionado = st.sidebar.selectbox("Seleccione el Año Operativo:", lista_anios, index=0)
 
@@ -773,18 +757,13 @@ lista_meses = [("Enero", 1), ("Febrero", 2), ("Marzo", 3), ("Abril", 4), ("Mayo"
                 ("Julio", 7), ("Agosto", 8), ("Septiembre", 9), ("Octubre", 10), ("Noviembre", 11), ("Diciembre", 12)]
 mes_nombre, mes_numerico = st.sidebar.selectbox("Seleccione el Mes de Distribución:", lista_meses, index=6, format_func=lambda x: x[0])
 
-# Carga con respaldo a las URLs en línea
-input_prospectos = file_prospectos or URL_PROSPECTOS
-df_prospectos_raw = procesar_base_prospectos(input_prospectos)
-
-input_clientes = file_clientes or URL_CLIENTES
-input_vendedores = file_vendedores or URL_VENDEDORES
-
-df_cl, df_vn = procesar_datos_maestros(input_clientes, input_vendedores)
+# Carga directa mediante las URLs
+df_prospectos_raw = procesar_base_prospectos(URL_PROSPECTOS)
+df_cl, df_vn = procesar_datos_maestros(URL_CLIENTES, URL_VENDEDORES)
 
 if df_cl is not None and df_vn is not None:
     df_cl = generar_rutas_por_densidad(df_cl, df_vn)
-    st.sidebar.success("Bases maestras vinculadas correctamente.")
+    st.sidebar.success("Bases conectadas por URL.")
     
     vendedor_opciones = df_vn['ID_Vendedor'].astype(str) + " - " + df_vn['Nombre'].astype(str)
     vendedor_seleccionado = st.selectbox("Seleccione el Vendedor para Desplegar Agenda Mensual:", vendedor_opciones)
@@ -980,7 +959,7 @@ if df_cl is not None and df_vn is not None:
                 st.subheader(f"💼 Tabla de Prospectos Comerciales dentro de la zona de cobertura (≤ 2 Km de la Ruta)")
                 
                 if df_prospectos_raw.empty:
-                    st.info("Por favor, suba el archivo de Prospectos en el panel izquierdo para visualizar este módulo.")
+                    st.info("No se encontraron registros de prospectos.")
                 elif df_prospectos_radio_2km.empty:
                     st.info("No se localizan prospectos de esta actividad económica en un radio de 2 Km para la ruta de este día.")
                 else:
@@ -1040,21 +1019,16 @@ if df_cl is not None and df_vn is not None:
         cliente_sel_sug = st.selectbox("Filtrar Pedido por Cliente Agendado Hoy:", ["TODOS"] + opciones_clientes)
 
         if st.button("🚀 Generar Análisis y Pedido Sugerido"):
-            input_rk = f_ranking or URL_RANKING_FERRETEROS
-            input_vt = f_ventas or URL_VENTAS_FERRETEROS
-            input_dm = f_demanda or URL_DEMANDA
-            input_ms = f_master or URL_MASTER_CLIENTES
-
             cl_id_pass = None if cliente_sel_sug == "TODOS" else cliente_sel_sug.split(" - ")[0]
 
             res_dict, err_msg, anio_extraido = procesar_pedido_sugerido(
                 id_vendedor=id_vendedor,
                 fecha_evaluada=fecha_eval_sug,
                 df_agenda_vendedor=df_agenda_mes,
-                f_ranking=input_rk,
-                f_ventas=input_vt,
-                f_demanda=input_dm,
-                f_master=input_ms,
+                f_ranking=URL_RANKING_FERRETEROS,
+                f_ventas=URL_VENTAS_FERRETEROS,
+                f_demanda=URL_DEMANDA,
+                f_master=URL_MASTER_CLIENTES,
                 cliente_id_seleccionado=cl_id_pass
             )
 
@@ -1078,7 +1052,6 @@ if df_cl is not None and df_vn is not None:
                     "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"
                 ]
 
-                # 1. Función para mostrar la tabla completa DESAGRUPADA por marca
                 def desplegar_tabla_desagrupada(df_datos, titulo_seccion):
                     st.subheader(titulo_seccion)
                     if df_datos.empty:
@@ -1093,7 +1066,6 @@ if df_cl is not None and df_vn is not None:
                         column_config=config_cols_sugerido
                     )
 
-                # 2. Función para mostrar la tabla AGRUPADA por marca (exclusiva para Oportunidades)
                 def desplegar_tabla_agrupada_por_marca(df_datos, titulo_seccion):
                     st.subheader(titulo_seccion)
                     if df_datos.empty:
@@ -1113,7 +1085,6 @@ if df_cl is not None and df_vn is not None:
                                 column_config=config_cols_sugerido
                             )
 
-                # --- RENDERIZADO DE TABLAS ---
                 desplegar_tabla_desagrupada(res_dict["pedido"], "PEDIDO SUGERIDO (TUS PRODUCTOS MÁS VENDIDOS 80/20)")
                 desplegar_tabla_desagrupada(res_dict["intermitente"], "PRODUCTOS CON VENTA INTERMITENTE")
                 desplegar_tabla_desagrupada(res_dict["recuperar_20"], "PRODUCTOS A RECUPERAR 20%")
@@ -1123,8 +1094,7 @@ if df_cl is not None and df_vn is not None:
     with tab_prospectos_sug:
         st.header("✨ Pedido Sugerido Clientes Nuevos")
         
-        input_sug_pros = f_sug_prospectos or URL_PEDIDO_SUGERIDO_PROSPECTOS
-        df_prospectos_sug = cargar_dataframe_flexible(input_sug_pros, nombre_defecto="PEDIDO SUGERIDO PROSPECTOS.xlsx", sheet_name="SUGERIDO FINAL")
+        df_prospectos_sug = cargar_dataframe_flexible(URL_PEDIDO_SUGERIDO_PROSPECTOS, nombre_defecto="PEDIDO SUGERIDO PROSPECTOS.xlsx", sheet_name="SUGERIDO FINAL")
         
         if df_prospectos_sug is not None and not df_prospectos_sug.empty:
             try:
@@ -1158,7 +1128,7 @@ if df_cl is not None and df_vn is not None:
             except Exception as e:
                 st.error(f"Error al procesar la hoja 'SUGERIDO FINAL': {str(e)}")
         else:
-            st.error("No se pudo cargar el archivo Excel. Asegúrese de subirlo desde el panel lateral o verificar la ruta predeterminada.")
+            st.error("No se pudo cargar el archivo Excel desde la URL especificada.")
 
 else:
-    st.info("Por favor, cargue las bases maestras en el panel lateral para iniciar la suite.")
+    st.info("No se pudieron conectar las bases de datos de clientes y vendedores.")
