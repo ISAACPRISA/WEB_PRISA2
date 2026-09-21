@@ -459,29 +459,17 @@ def procesar_pedido_sugerido(
             df_demanda["Año"] = df_demanda["Fecha_dt"].dt.year
             df_demanda["Mes"] = df_demanda["Fecha_dt"].dt.month
 
-        fecha_eval_str = (
-            fecha_evaluada.strftime("%Y-%m-%d")
-            if hasattr(fecha_evaluada, "strftime")
-            else str(fecha_evaluada)
-        )
-        df_agenda_dia = df_agenda_vendedor[
-            df_agenda_vendedor["Fecha_Raw"].astype(str) == fecha_eval_str
-        ].copy()
-        df_agenda_dia = df_agenda_dia[df_agenda_dia["ID_Cliente"] != "-"]
-
-        if df_agenda_dia.empty:
-            return None, "No hay clientes agendados para la fecha seleccionada.", None
-
+        # Evaluación global o filtrada por cliente seleccionado
         if cliente_id_seleccionado and str(cliente_id_seleccionado).strip() != "-":
             id_sel_clean = str(cliente_id_seleccionado).split("-")[0].strip()
-            df_agenda_dia["ID_Cliente_Clean"] = (
-                df_agenda_dia["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-            )
-            df_agenda_dia = df_agenda_dia[df_agenda_dia["ID_Cliente_Clean"] == id_sel_clean]
-            if df_agenda_dia.empty:
-                return None, f"El cliente seleccionado ({cliente_id_seleccionado}) no está agendado hoy.", None
+            df_agenda_eval = df_agenda_vendedor[df_agenda_vendedor["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_sel_clean].copy()
+        else:
+            df_agenda_eval = df_agenda_vendedor[df_agenda_vendedor["ID_Cliente"] != "-"].copy()
 
-        clientes_dia = df_agenda_dia[["ID_Cliente", "Cliente"]].drop_duplicates()
+        if df_agenda_eval.empty:
+            return None, "No hay clientes agendados para evaluar.", None
+
+        clientes_dia = df_agenda_eval[["ID_Cliente", "Cliente"]].drop_duplicates()
         clientes_dia["ID_Cliente"] = clientes_dia["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
 
         df_ranking.columns = df_ranking.columns.astype(str).str.strip()
@@ -774,7 +762,7 @@ anio_seleccionado = st.sidebar.selectbox("Seleccione el Año Operativo:", lista_
 
 lista_meses = [("Enero", 1), ("Febrero", 2), ("Marzo", 3), ("Abril", 4), ("Mayo", 5), ("Junio", 6), 
                 ("Julio", 7), ("Agosto", 8), ("Septiembre", 9), ("Octubre", 10), ("Noviembre", 11), ("Diciembre", 12)]
-mes_nombre, mes_numerico = st.sidebar.selectbox("Seleccione el Mes de Distribución:", lista_meses, index=6, format_func=lambda x: x[0])
+mes_nombre, mes_numerico = st.sidebar.selectbox("Seleccione el Mes de Distribución:", lista_meses, index=8, format_func=lambda x: x[0])
 
 # Carga directa mediante las URLs
 df_prospectos_raw = procesar_base_prospectos(URL_PROSPECTOS)
@@ -1036,18 +1024,21 @@ if df_cl is not None and df_vn is not None:
                 key="fecha_sug_input_independiente"
             )
 
-        df_ag_dia = df_agenda_mes[df_agenda_mes['Fecha_Raw'] == fecha_eval_sug] if df_agenda_mes is not None and not df_agenda_mes.empty else pd.DataFrame()
-        
+        # Se cargan TODOS los clientes del vendedor para el mes activo
         opciones_clientes = []
-        if not df_ag_dia.empty:
-            cls_unicos = df_ag_dia[df_ag_dia['ID_Cliente'] != '-'][['ID_Cliente', 'Cliente']].drop_duplicates()
+        if df_agenda_mes is not None and not df_agenda_mes.empty:
+            cls_unicos = df_agenda_mes[df_agenda_mes['ID_Cliente'] != '-'][['ID_Cliente', 'Cliente']].drop_duplicates()
+            for _, r_cl in cls_unicos.iterrows():
+                opciones_clientes.append(f"{r_cl['ID_Cliente']} - {r_cl['Cliente']}")
+        elif df_universo is not None and not df_universo.empty:
+            cls_unicos = df_universo[['ID_Cliente', 'Cliente']].drop_duplicates()
             for _, r_cl in cls_unicos.iterrows():
                 opciones_clientes.append(f"{r_cl['ID_Cliente']} - {r_cl['Cliente']}")
 
         with c_sug2:
             cliente_sel_sug = st.selectbox(
-                "Seleccione Cliente Agendado (o Evalué Todos):", 
-                ["TODOS"] + opciones_clientes,
+                f"Seleccione Cliente Agendado en {mes_nombre} (o Evalúe Todos):", 
+                ["TODOS"] + sorted(opciones_clientes),
                 key="cliente_sug_input_independiente"
             )
 
