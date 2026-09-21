@@ -3,7 +3,6 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 import folium
 import streamlit as st
-import streamlit.components.v1 as components
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, date
@@ -11,6 +10,13 @@ import calendar
 import re
 import os
 import urllib.parse 
+import io
+
+# Librerías de ReportLab para la generación nativa de PDF
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # =============================================================================
 # URLS DE GITHUB
@@ -395,8 +401,92 @@ def generar_agenda_dinamica(vendedor_id, df_clientes, df_vendedores, anio, mes):
     return df_resultado, base_coords, clientes_vendedor
 
 # =============================================================================
-# 3. PROCESAMIENTO DEL PEDIDO SUGERIDO Y ANÁLISIS DE COBERTURAS
+# 3. PROCESAMIENTO DEL PEDIDO SUGERIDO Y GENERACIÓN DE PDF
 # =============================================================================
+def generar_reporte_pdf(res_dict, cliente_sel, mes_nombre, anio):
+    """Genera un archivo PDF vectorial descargable conteniendo todas las tablas del pedido sugerido."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=landscape(letter), 
+        rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+
+    titulo_style = ParagraphStyle(
+        'TituloPDF', parent=styles['Heading1'], fontSize=16, leading=20, 
+        textColor=colors.HexColor('#1E293B'), spaceAfter=5
+    )
+    subtitulo_style = ParagraphStyle(
+        'SubtituloPDF', parent=styles['Normal'], fontSize=10, leading=14, 
+        textColor=colors.HexColor('#475569'), spaceAfter=15
+    )
+    seccion_style = ParagraphStyle(
+        'SeccionPDF', parent=styles['Heading2'], fontSize=12, leading=16, 
+        textColor=colors.HexColor('#0F172A'), spaceBefore=12, spaceAfter=8
+    )
+    cell_style = ParagraphStyle(
+        'CellPDF', parent=styles['Normal'], fontSize=8, leading=10
+    )
+    cell_header_style = ParagraphStyle(
+        'CellHeaderPDF', parent=styles['Normal'], fontSize=8, leading=10, 
+        textColor=colors.whitesmoke, fontName='Helvetica-Bold'
+    )
+
+    elements.append(Paragraph("<b>REPORTES DE PEDIDO SUGERIDO Y OPORTUNIDADES</b>", titulo_style))
+    elements.append(Paragraph(f"<b>Cliente Evaluado:</b> {cliente_sel} | <b>Periodo:</b> {mes_nombre} {anio}", subtitulo_style))
+    elements.append(Spacer(1, 10))
+
+    secciones = [
+        ("1. PEDIDO SUGERIDO (PRODUCTOS 80/20)", res_dict.get("pedido")),
+        ("2. PRODUCTOS CON VENTA INTERMITENTE", res_dict.get("intermitente")),
+        ("3. PRODUCTOS A RECUPERAR 20%", res_dict.get("recuperar_20")),
+        ("4. OPORTUNIDADES (PRODUCTOS DE CANAL)", res_dict.get("oportunidades"))
+    ]
+
+    for titulo, df_sec in secciones:
+        elements.append(Paragraph(f"<b>{titulo}</b>", seccion_style))
+        
+        if df_sec is None or df_sec.empty:
+            elements.append(Paragraph("<i>No existen registros para esta categoría.</i>", subtitulo_style))
+            elements.append(Spacer(1, 10))
+            continue
+
+        data_tabla = []
+        cols = ["Marca", "Código de Producto", "DESCRIPCIÓN", "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"]
+        
+        # Encabezados
+        header_row = [Paragraph(f"<b>{c}</b>", cell_header_style) for c in cols]
+        data_tabla.append(header_row)
+
+        # Filas
+        for _, row in df_sec.iterrows():
+            row_data = []
+            for col in cols:
+                val = str(row.get(col, ''))
+                row_data.append(Paragraph(val, cell_style))
+            data_tabla.append(row_data)
+
+        # Configuración de anchos de columna para Hoja Carta Horizontal
+        tabla = Table(data_tabla, colWidths=[90, 80, 260, 50, 50, 60, 90], repeatRows=1)
+        tabla.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#FF4B4B')),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')])
+        ]))
+        
+        elements.append(tabla)
+        elements.append(Spacer(1, 15))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
 def procesar_pedido_sugerido(
     id_vendedor,
     mes_evaluado,
@@ -707,7 +797,7 @@ def obtener_ruta_calles_osrm(puntos):
 # =============================================================================
 st.set_page_config(layout="wide")
 
-# Estilos CSS generales y reglas específicas para IMPRESIÓN PDF
+# Estilos CSS generales y botón de descarga personalizado
 st.markdown("""
     <style>
     th[role="columnheader"] div {
@@ -721,26 +811,21 @@ st.markdown("""
         vertical-align: bottom !important;
     }
     
-    /* Configuración para la exportación/impresión a PDF */
-    @media print {
-        section[data-testid="stSidebar"], 
-        header, 
-        footer, 
-        .stButton, 
-        .no-print {
-            display: none !important;
-        }
-        .main .block-container {
-            max-width: 100% !important;
-            padding: 0 !important;
-        }
-        div[data-testid="stExpander"] {
-            display: block !important;
-            border: 1px solid #ccc !important;
-        }
-        div[data-testid="stExpander"] > div[role="button"] {
-            pointer-events: none;
-        }
+    /* Estilo para el botón de descarga del PDF en color rojo empresarial */
+    div.stDownloadButton > button {
+        background-color: #FF4B4B !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        padding: 10px 20px !important;
+        font-weight: bold !important;
+        font-size: 15px !important;
+        width: 100% !important;
+        box-shadow: 0px 2px 5px rgba(0,0,0,0.2) !important;
+    }
+    div.stDownloadButton > button:hover {
+        background-color: #D32F2F !important;
+        color: white !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -779,7 +864,7 @@ if df_cl is not None and df_vn is not None:
     id_vendedor = vendedor_seleccionado.split(" - ")[0].strip().split(".")[0]
     df_agenda_mes, inicio_coords, df_universo = generar_agenda_dinamica(id_vendedor, df_cl, df_vn, anio_seleccionado, mes_numerico)
     
-    # Pestañas principales (Totalmente desvinculadas)
+    # Pestañas principales
     tab_rutas, tab_sugerido, tab_prospectos_sug = st.tabs([
         "🗺️ Rutas y Logística", 
         "📊 Pedido Sugerido y Análisis", 
@@ -1011,12 +1096,11 @@ if df_cl is not None and df_vn is not None:
                 )
 
     # -------------------------------------------------------------------------
-    # SEGUNDA PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS (EVALUACIÓN POR MES Y AÑO)
+    # SEGUNDA PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS (DESCARGA NATIVA A PDF)
     # -------------------------------------------------------------------------
     with tab_sugerido:
         st.header("📊 Módulo de Pedido Sugerido por Marca")
 
-        # Filtro propio e independiente de Mes y Año a evaluar
         c_sug1, c_sug2, c_sug3 = st.columns([0.3, 0.2, 0.5])
         with c_sug1:
             mes_eval_tupla = st.selectbox(
@@ -1036,7 +1120,6 @@ if df_cl is not None and df_vn is not None:
                 key="anio_sug_input_independiente"
             )
 
-        # Se cargan TODOS los clientes del vendedor para el mes activo
         opciones_clientes = []
         if df_agenda_mes is not None and not df_agenda_mes.empty:
             cls_unicos = df_agenda_mes[df_agenda_mes['ID_Cliente'] != '-'][['ID_Cliente', 'Cliente']].drop_duplicates()
@@ -1077,30 +1160,33 @@ if df_cl is not None and df_vn is not None:
                 st.error(err_msg)
             else:
                 st.session_state["res_dict_sugerido"] = res_dict
+                st.session_state["pdf_cliente_sel"] = cliente_sel_sug
+                st.session_state["pdf_mes_nombre"] = mes_eval_tupla[0]
+                st.session_state["pdf_anio"] = anio_eval_num
                 st.success("Cálculo finalizado exitosamente.")
 
-        # Si existen datos calculados en la sesión, los mostramos
+        # Si existen datos calculados en la sesión, mostramos el botón PDF y las tablas
         if "res_dict_sugerido" in st.session_state:
             res_dict = st.session_state["res_dict_sugerido"]
 
-            # BOTÓN DE IMPRESIÓN A PDF
+            # --- BOTÓN DE DESCARGA PDF ---
             st.markdown("---")
-            components.html("""
-                <div style="text-align: right; margin-bottom: 10px;">
-                    <button onclick="window.print()" style="
-                        background-color: #FF4B4B;
-                        color: white;
-                        border: none;
-                        padding: 10px 20px;
-                        font-size: 16px;
-                        font-weight: bold;
-                        border-radius: 8px;
-                        cursor: pointer;
-                        box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
-                        🖨️ IMPRIMIR TODAS LAS TABLAS DEL SUGERIDO (PDF)
-                    </button>
-                </div>
-            """, height=60)
+            col_izq_dummy, col_der_pdf = st.columns([0.6, 0.4])
+            with col_der_pdf:
+                pdf_buffer = generar_reporte_pdf(
+                    res_dict, 
+                    st.session_state.get("pdf_cliente_sel", "TODOS"), 
+                    st.session_state.get("pdf_mes_nombre", mes_nombre), 
+                    st.session_state.get("pdf_anio", anio_seleccionado)
+                )
+                
+                st.download_button(
+                    label="🖨️ IMPRIMIR TODAS LAS TABLAS DEL SUGERIDO (PDF)",
+                    data=pdf_buffer,
+                    file_name=f"Pedido_Sugerido_{st.session_state.get('pdf_mes_nombre', mes_nombre)}_{st.session_state.get('pdf_anio', anio_seleccionado)}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
 
             config_cols_sugerido = {
                 "Marca": st.column_config.TextColumn("Marca", width="medium"),
