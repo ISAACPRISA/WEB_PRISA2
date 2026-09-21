@@ -12,6 +12,20 @@ import os
 import urllib.parse 
 
 # =============================================================================
+# URLS DE GITHUB
+# =============================================================================
+URL_CATALOGO_MARCAS = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/CATALOGO%20DE%20MARCAS%20POR%20PRODUCTO.xlsx?raw=true"
+URL_DEMANDA = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/Demanda.xlsx?raw=true"
+URL_LOGO_PRISA = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/Logo_PRISA.png?raw=true"
+URL_MASTER_CLIENTES = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/MASTER%20DE%20CLIENTES.xlsx?raw=true"
+URL_PEDIDO_SUGERIDO_PROSPECTOS = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/PEDIDO%20SUGERIDO%20PROSPECTOS.xlsx?raw=true"
+URL_RANKING_FERRETEROS = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/RANKING%20FERRETEROS.xlsx?raw=true"
+URL_CLIENTES = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/clientes.xlsx?raw=true"
+URL_PROSPECTOS = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/prospectos.xlsx?raw=true"
+URL_VENDEDORES = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/vendedores.xlsx?raw=true"
+URL_VENTAS_FERRETEROS = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/VENTAS%20FERRETEROS.xlsx?raw=true"
+
+# =============================================================================
 # 0. CONFIGURACIÓN DE APIS Y EXTRACCIÓN DE GASOLINA (CACHÉ 24 HORAS)
 # =============================================================================
 MAPBOX_TOKEN = "pk.eyJ1Ijoia2FyZW5tYWNpYXMxIiwiYSI6ImNtcWlma2pzODA2bW4ycG9hdjI0MjBiZ20ifQ.7NURZ9JkaPZ49hWRhfSDOg" 
@@ -90,7 +104,9 @@ def cargar_dataframe_flexible(file_input, nombre_defecto="", sheet_name=0):
         return None
     try:
         if isinstance(file_input, str):
-            if os.path.exists(file_input):
+            if file_input.startswith("http://") or file_input.startswith("https://"):
+                df = pd.read_excel(file_input, sheet_name=sheet_name)
+            elif os.path.exists(file_input):
                 df = pd.read_excel(file_input, sheet_name=sheet_name)
             else:
                 return None
@@ -116,8 +132,8 @@ def homologar_columna_cliente(df):
 # 1. PROCESAMIENTO DE DATOS MAESTROS
 # =============================================================================
 def procesar_datos_maestros(file_clientes, file_vendedores):
-    df_clientes = pd.read_excel(file_clientes)
-    df_vendedores = pd.read_excel(file_vendedores)
+    df_clientes = pd.read_excel(file_clientes) if not isinstance(file_clientes, pd.DataFrame) else file_clientes
+    df_vendedores = pd.read_excel(file_vendedores) if not isinstance(file_vendedores, pd.DataFrame) else file_vendedores
     
     df_clientes.columns = df_clientes.columns.str.strip().str.replace('\n', ' ')
     df_vendedores.columns = df_vendedores.columns.str.strip().str.replace('\n', ' ')
@@ -172,7 +188,7 @@ def procesar_datos_maestros(file_clientes, file_vendedores):
 
 def procesar_base_prospectos(file_prospectos):
     try:
-        df_p = pd.read_excel(file_prospectos)
+        df_p = pd.read_excel(file_prospectos) if not isinstance(file_prospectos, pd.DataFrame) else file_prospectos
         df_p.columns = df_p.columns.str.strip()
         
         columnas_esperadas = ["Nombre de la Unidad Económica", "Clase de actividad SCIAN", "Latitud", "Longitud", "Domicilio"]
@@ -413,9 +429,8 @@ def procesar_pedido_sugerido(
             return None, f"Faltan los siguientes archivos necesarios: {', '.join(missing)}", None
 
         # Carga del catálogo de marcas
-        ruta_marcas = r"C:\Users\lmacias\Desktop\PEDIDOS SUGERIDOS\CATALOGO DE MARCAS POR PRODUCTO.xlsx"
-        if os.path.exists(ruta_marcas):
-            df_marcas = pd.read_excel(ruta_marcas)
+        df_marcas = cargar_dataframe_flexible(URL_CATALOGO_MARCAS, "CATALOGO DE MARCAS POR PRODUCTO.xlsx")
+        if df_marcas is not None and not df_marcas.empty:
             df_marcas.columns = df_marcas.columns.astype(str).str.strip()
             
             col_cod_m = next((c for c in df_marcas.columns if re.search(r"c[oó]digo[_\s]*de[_\s]*producto|cod[_\s]*prod|producto", c, re.IGNORECASE)), None)
@@ -729,7 +744,7 @@ with col_titulo:
     st.title("FERREPLANNER PRISA")
 with col_logo:
     try:
-        st.image(r"C:\Users\lmacias\Desktop\RUTAS LÓGICAS\Logo_PRISA.png", width=640)
+        st.image(URL_LOGO_PRISA, width=640)
     except:
         st.markdown("<p style='text-align: right; color: gray; font-size: 12px;'>[ Logo Empresa ]</p>", unsafe_allow_html=True)
 
@@ -758,12 +773,16 @@ lista_meses = [("Enero", 1), ("Febrero", 2), ("Marzo", 3), ("Abril", 4), ("Mayo"
                 ("Julio", 7), ("Agosto", 8), ("Septiembre", 9), ("Octubre", 10), ("Noviembre", 11), ("Diciembre", 12)]
 mes_nombre, mes_numerico = st.sidebar.selectbox("Seleccione el Mes de Distribución:", lista_meses, index=6, format_func=lambda x: x[0])
 
-df_prospectos_raw = pd.DataFrame()
-if file_prospectos:
-    df_prospectos_raw = procesar_base_prospectos(file_prospectos)
+# Carga con respaldo a las URLs en línea
+input_prospectos = file_prospectos or URL_PROSPECTOS
+df_prospectos_raw = procesar_base_prospectos(input_prospectos)
 
-if file_clientes and file_vendedores:
-    df_cl, df_vn = procesar_datos_maestros(file_clientes, file_vendedores)
+input_clientes = file_clientes or URL_CLIENTES
+input_vendedores = file_vendedores or URL_VENDEDORES
+
+df_cl, df_vn = procesar_datos_maestros(input_clientes, input_vendedores)
+
+if df_cl is not None and df_vn is not None:
     df_cl = generar_rutas_por_densidad(df_cl, df_vn)
     st.sidebar.success("Bases maestras vinculadas correctamente.")
     
@@ -819,6 +838,9 @@ if file_clientes and file_vendedores:
                     
             df_dia_filtrado = df_agenda_mes[df_agenda_mes['Fecha_Raw'] == fecha_seleccionada].reset_index(drop=True)
             
+            puntos_circuito = []
+            es_dia_vacio = True
+
             if df_dia_filtrado.empty:
                 st.info(f"📆 El día {fecha_seleccionada.strftime('%d/%m/%Y')} corresponde a un Fin de Semana (Fuera de la jornada laboral).")
             else:
@@ -957,7 +979,7 @@ if file_clientes and file_vendedores:
                 st.markdown("---")
                 st.subheader(f"💼 Tabla de Prospectos Comerciales dentro de la zona de cobertura (≤ 2 Km de la Ruta)")
                 
-                if file_prospectos is None:
+                if df_prospectos_raw.empty:
                     st.info("Por favor, suba el archivo de Prospectos en el panel izquierdo para visualizar este módulo.")
                 elif df_prospectos_radio_2km.empty:
                     st.info("No se localizan prospectos de esta actividad económica en un radio de 2 Km para la ruta de este día.")
@@ -989,16 +1011,13 @@ if file_clientes and file_vendedores:
                 height=400, use_container_width=True, hide_index=True
             )
 
-    if not es_dia_vacio and len(puntos_circuito) > 1:
-                    # Generamos el link enviándole la lista 'puntos_circuito'
-                     link_maps = generar_link_google_maps(puntos_circuito)
-                    
-                    # Desplegamos el botón interactivo justo debajo del mapa
-    st.link_button(
-                        label="🗺️ Abrir ruta completa en Google Maps",
-                        url=link_maps,
-                        use_container_width=True
-                    )
+            if not es_dia_vacio and len(puntos_circuito) > 1:
+                link_maps = generar_link_google_maps(puntos_circuito)
+                st.link_button(
+                    label="🗺️ Abrir ruta completa en Google Maps",
+                    url=link_maps,
+                    use_container_width=True
+                )
 
     # --- PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS ---
     with tab_sugerido:
@@ -1021,96 +1040,90 @@ if file_clientes and file_vendedores:
         cliente_sel_sug = st.selectbox("Filtrar Pedido por Cliente Agendado Hoy:", ["TODOS"] + opciones_clientes)
 
         if st.button("🚀 Generar Análisis y Pedido Sugerido"):
-            if not (f_ranking or os.path.exists(r"C:\Users\lmacias\Desktop\PEDIDOS SUGERIDOS\RANKING FERRETEROS.xlsx")):
-                st.error("Falta el archivo de RANKING FERRETEROS.")
+            input_rk = f_ranking or URL_RANKING_FERRETEROS
+            input_vt = f_ventas or URL_VENTAS_FERRETEROS
+            input_dm = f_demanda or URL_DEMANDA
+            input_ms = f_master or URL_MASTER_CLIENTES
+
+            cl_id_pass = None if cliente_sel_sug == "TODOS" else cliente_sel_sug.split(" - ")[0]
+
+            res_dict, err_msg, anio_extraido = procesar_pedido_sugerido(
+                id_vendedor=id_vendedor,
+                fecha_evaluada=fecha_eval_sug,
+                df_agenda_vendedor=df_agenda_mes,
+                f_ranking=input_rk,
+                f_ventas=input_vt,
+                f_demanda=input_dm,
+                f_master=input_ms,
+                cliente_id_seleccionado=cl_id_pass
+            )
+
+            if err_msg:
+                st.error(err_msg)
             else:
-                input_rk = f_ranking or r"C:\Users\lmacias\Desktop\PEDIDOS SUGERIDOS\RANKING FERRETEROS.xlsx"
-                input_vt = f_ventas or r"C:\Users\lmacias\Desktop\PEDIDOS SUGERIDOS\VENTAS FERRETEROS.xlsx"
-                input_dm = f_demanda or r"C:\Users\lmacias\Desktop\PEDIDOS SUGERIDOS\Demanda.xlsx"
-                input_ms = f_master or r"C:\Users\lmacias\Desktop\PROYECCIÓN DE VENTA 2027\MASTER DE CLIENTES.xlsx"
+                st.success("Cálculo finalizado exitosamente.")
 
-                cl_id_pass = None if cliente_sel_sug == "TODOS" else cliente_sel_sug.split(" - ")[0]
+                config_cols_sugerido = {
+                    "Marca": st.column_config.TextColumn("Marca", width="medium"),
+                    "Código de Producto": st.column_config.TextColumn("Código de Producto", width="small"),
+                    "DESCRIPCIÓN": st.column_config.TextColumn("DESCRIPCIÓN", width="large"),
+                    "Sugerido": st.column_config.NumberColumn("Sugerido", width="small", format="%d"),
+                    "Avance": st.column_config.NumberColumn("Avance", width="small", format="%d"),
+                    "Indicador": st.column_config.TextColumn("Indicador", width="small"),
+                    "Ultimo mes de Venta": st.column_config.TextColumn("Ultimo mes de Venta", width="small"),
+                }
 
-                res_dict, err_msg, anio_extraido = procesar_pedido_sugerido(
-                    id_vendedor=id_vendedor,
-                    fecha_evaluada=fecha_eval_sug,
-                    df_agenda_vendedor=df_agenda_mes,
-                    f_ranking=input_rk,
-                    f_ventas=input_vt,
-                    f_demanda=input_dm,
-                    f_master=input_ms,
-                    cliente_id_seleccionado=cl_id_pass
-                )
+                cols_visibles = [
+                    "Marca", "Código de Producto", "DESCRIPCIÓN", 
+                    "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"
+                ]
 
-                if err_msg:
-                    st.error(err_msg)
-                else:
-                    st.success("Cálculo finalizado exitosamente.")
-
-                    config_cols_sugerido = {
-                        "Marca": st.column_config.TextColumn("Marca", width="medium"),
-                        "Código de Producto": st.column_config.TextColumn("Código de Producto", width="small"),
-                        "DESCRIPCIÓN": st.column_config.TextColumn("DESCRIPCIÓN", width="large"),
-                        "Sugerido": st.column_config.NumberColumn("Sugerido", width="small", format="%d"),
-                        "Avance": st.column_config.NumberColumn("Avance", width="small", format="%d"),
-                        "Indicador": st.column_config.TextColumn("Indicador", width="small"),
-                        "Ultimo mes de Venta": st.column_config.TextColumn("Ultimo mes de Venta", width="small"),
-                    }
-
-                    cols_visibles = [
-                        "Marca", "Código de Producto", "DESCRIPCIÓN", 
-                        "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"
-                    ]
-
-                    # 1. Función para mostrar la tabla completa DESAGRUPADA por marca
-                    def desplegar_tabla_desagrupada(df_datos, titulo_seccion):
-                        st.subheader(titulo_seccion)
-                        if df_datos.empty:
-                            st.info("No hay registros disponibles para esta categoría.")
-                            return
-                        
-                        cols_a_mostrar = [c for c in cols_visibles if c in df_datos.columns]
-                        st.dataframe(
-                            df_datos[cols_a_mostrar], 
-                            use_container_width=True, 
-                            hide_index=True, 
-                            column_config=config_cols_sugerido
-                        )
-
-                    # 2. Función para mostrar la tabla AGRUPADA por marca (exclusiva para Oportunidades)
-                    def desplegar_tabla_agrupada_por_marca(df_datos, titulo_seccion):
-                        st.subheader(titulo_seccion)
-                        if df_datos.empty:
-                            st.info("No hay registros disponibles para esta categoría.")
-                            return
-                        
-                        marcas = df_datos["Marca"].unique()
-                        for m in marcas:
-                            df_m = df_datos[df_datos["Marca"] == m]
-                            cols_a_mostrar = [c for c in cols_visibles if c in df_m.columns]
-                            
-                            with st.expander(f"📌 **Marca: {m}** ({len(df_m)} productos)"):
-                                st.dataframe(
-                                    df_m[cols_a_mostrar], 
-                                    use_container_width=True, 
-                                    hide_index=True, 
-                                    column_config=config_cols_sugerido
-                                )
-
-                    # --- RENDERIZADO DE TABLAS ---
-                    # Las primeras 3 tablas se muestran en vista continua (DESAGRUPADAS)
-                    desplegar_tabla_desagrupada(res_dict["pedido"], "PEDIDO SUGERIDO (TUS PRODUCTOS MÁS VENDIDOS 80/20)")
-                    desplegar_tabla_desagrupada(res_dict["intermitente"], "PRODUCTOS CON VENTA INTERMITENTE")
-                    desplegar_tabla_desagrupada(res_dict["recuperar_20"], "PRODUCTOS A RECUPERAR 20%")
+                # 1. Función para mostrar la tabla completa DESAGRUPADA por marca
+                def desplegar_tabla_desagrupada(df_datos, titulo_seccion):
+                    st.subheader(titulo_seccion)
+                    if df_datos.empty:
+                        st.info("No hay registros disponibles para esta categoría.")
+                        return
                     
-                    # Únicamente OPORTUNIDADES se mantiene con acordeones agrupados por Marca
-                    desplegar_tabla_agrupada_por_marca(res_dict["oportunidades"], "OPORTUNIDADES (PRODUCTOS DE CANAL)")
+                    cols_a_mostrar = [c for c in cols_visibles if c in df_datos.columns]
+                    st.dataframe(
+                        df_datos[cols_a_mostrar], 
+                        use_container_width=True, 
+                        hide_index=True, 
+                        column_config=config_cols_sugerido
+                    )
+
+                # 2. Función para mostrar la tabla AGRUPADA por marca (exclusiva para Oportunidades)
+                def desplegar_tabla_agrupada_por_marca(df_datos, titulo_seccion):
+                    st.subheader(titulo_seccion)
+                    if df_datos.empty:
+                        st.info("No hay registros disponibles para esta categoría.")
+                        return
+                    
+                    marcas = df_datos["Marca"].unique()
+                    for m in marcas:
+                        df_m = df_datos[df_datos["Marca"] == m]
+                        cols_a_mostrar = [c for c in cols_visibles if c in df_m.columns]
+                        
+                        with st.expander(f"📌 **Marca: {m}** ({len(df_m)} productos)"):
+                            st.dataframe(
+                                df_m[cols_a_mostrar], 
+                                use_container_width=True, 
+                                hide_index=True, 
+                                column_config=config_cols_sugerido
+                            )
+
+                # --- RENDERIZADO DE TABLAS ---
+                desplegar_tabla_desagrupada(res_dict["pedido"], "PEDIDO SUGERIDO (TUS PRODUCTOS MÁS VENDIDOS 80/20)")
+                desplegar_tabla_desagrupada(res_dict["intermitente"], "PRODUCTOS CON VENTA INTERMITENTE")
+                desplegar_tabla_desagrupada(res_dict["recuperar_20"], "PRODUCTOS A RECUPERAR 20%")
+                desplegar_tabla_agrupada_por_marca(res_dict["oportunidades"], "OPORTUNIDADES (PRODUCTOS DE CANAL)")
 
     # --- PESTAÑA: PEDIDO SUGERIDO CLIENTES NUEVOS ---
     with tab_prospectos_sug:
         st.header("✨ Pedido Sugerido Clientes Nuevos")
         
-        input_sug_pros = f_sug_prospectos or r"C:\Users\lmacias\Desktop\PEDIDOS SUGERIDOS\CLIENTES NUEVOS\PEDIDO SUGERIDO PROSPECTOS.xlsx"
+        input_sug_pros = f_sug_prospectos or URL_PEDIDO_SUGERIDO_PROSPECTOS
         df_prospectos_sug = cargar_dataframe_flexible(input_sug_pros, nombre_defecto="PEDIDO SUGERIDO PROSPECTOS.xlsx", sheet_name="SUGERIDO FINAL")
         
         if df_prospectos_sug is not None and not df_prospectos_sug.empty:
