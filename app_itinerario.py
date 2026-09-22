@@ -33,7 +33,7 @@ URL_VENDEDORES = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/vendedores.
 URL_VENTAS_DEFAULT = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/VENTAS%20FERRETEROS.xlsx?raw=true"
 
 # =============================================================================
-# 0. CONFIGURACIÓN DE APIS Y EXTRACCIÓN DE GASOLINA (CACHÉ 24 HORAS)
+# 0. CONFIGURACIÓN DE APIS Y FUNCIONES DE HOMOLOGACIÓN Y CACHÉ
 # =============================================================================
 MAPBOX_TOKEN = "pk.eyJ1Ijoia2FyZW5tYWNpYXMxIiwiYSI6ImNtcWlma2pzODA2bW4ycG9hdjI0MjBiZ20ifQ.7NURZ9JkaPZ49hWRhfSDOg" 
 MAPBOX_STYLE = "streets-v12" 
@@ -126,11 +126,11 @@ def cargar_dataframe_flexible(file_input, nombre_defecto="", sheet_name=0):
         return None
 
 def homologar_columna_cliente(df):
-    """Homologa 'Codigo de Cliente' e 'ID_Cliente' a 'ID_Cliente'."""
+    """Homologa 'Codigo de Cliente', 'Codigo Cliente de' e 'ID_Cliente' a 'ID_Cliente'."""
     if df is None:
         return None
     for col in df.columns:
-        if re.search(r"c[oó]digo[_\s]*de[_\s]*cliente|cod[_\s]*cliente|id[_\s]*cliente", col, re.IGNORECASE):
+        if re.search(r"c[oó]digo[_\s]*de[_\s]*cliente|c[oó]digo[_\s]*cliente[_\s]*de|cod[_\s]*cliente|id[_\s]*cliente", col, re.IGNORECASE):
             df.rename(columns={col: "ID_Cliente"}, inplace=True)
             break
     if "ID_Cliente" in df.columns:
@@ -159,7 +159,7 @@ def procesar_datos_maestros(file_clientes, file_vendedores):
     df_clientes.columns = df_clientes.columns.str.strip().str.replace('\n', ' ')
     df_vendedores.columns = df_vendedores.columns.str.strip().str.replace('\n', ' ')
     
-    # Aplicar la homologación para MASTER DE CLIENTES / CLIENTES y VENDEDORES
+    # Aplicar la homologación para clientes.xlsx y vendedores.xlsx
     df_clientes = homologar_columna_cliente(df_clientes)
     df_clientes = homologar_columna_vendedor(df_clientes)
     df_vendedores = homologar_columna_vendedor(df_vendedores)
@@ -522,6 +522,7 @@ def procesar_pedido_sugerido(
     cliente_id_seleccionado=None,
 ):
     try:
+        # Carga de dataframes desde las URLs dinámicas e individuales
         df_master = cargar_dataframe_flexible(f_master, "MASTER DE CLIENTES.xlsx")
         df_ranking = cargar_dataframe_flexible(f_ranking, "RANKING FERRETEROS.xlsx")
         df_ventas = cargar_dataframe_flexible(url_ventas_dinamica, "VENTAS DINAMICAS.xlsx")
@@ -536,11 +537,10 @@ def procesar_pedido_sugerido(
         if missing:
             return None, f"Faltan los siguientes archivos necesarios: {', '.join(missing)}", None
 
-        # Carga del catálogo de marcas
+        # Carga de marcas
         df_marcas = cargar_dataframe_flexible(URL_CATALOGO_MARCAS, "CATALOGO DE MARCAS POR PRODUCTO.xlsx")
         if df_marcas is not None and not df_marcas.empty:
             df_marcas.columns = df_marcas.columns.astype(str).str.strip()
-            
             col_cod_m = next((c for c in df_marcas.columns if re.search(r"c[oó]digo[_\s]*de[_\s]*producto|cod[_\s]*prod|producto", c, re.IGNORECASE)), None)
             col_marca_m = next((c for c in df_marcas.columns if re.search(r"marca", c, re.IGNORECASE)), None)
             
@@ -556,19 +556,19 @@ def procesar_pedido_sugerido(
         if "TOTAL" not in df_ventas.columns:
             return None, "La columna 'TOTAL' no se encuentra en la base de ventas procesada.", None
 
-        # HOMOLOGACIONES DE ARCHIVOS
-        # 1. MASTER DE CLIENTES -> <Vendedor> y <Codigo de Cliente>
+        # HOMOLOGACIÓN DE COLUMNAS SEGÚN LAS ESPECIFICACIONES RECIBIDAS
+        # 1. MASTER DE CLIENTES -> <Vendedor> e <ID_Vendedor>, <Codigo de Cliente> e <ID_Cliente>
         df_master = homologar_columna_cliente(df_master)
         df_master = homologar_columna_vendedor(df_master)
 
-        # 2. VENTAS DINAMICAS -> <Vendedor> y <Codigo de Cliente>
+        # 2. VENTAS DINAMICAS -> <Vendedor> e <ID_Vendedor>, <Codigo de Cliente> e <ID_Cliente>
         df_ventas = homologar_columna_cliente(df_ventas)
         df_ventas = homologar_columna_vendedor(df_ventas)
 
-        # 3. Demanda -> <Codigo de Cliente> es igual a <ID_Cliente>
+        # 3. Demanda -> <Codigo de Cliente> homologado a <ID_Cliente>
         df_demanda = homologar_columna_cliente(df_demanda)
 
-        # Filtrar ventas por el vendedor evaluado si está presente la columna ID_Vendedor / Vendedor
+        # Filtrar ventas por el vendedor evaluado si está presente la columna ID_Vendedor
         id_vendedor_str = str(id_vendedor).strip()
         if "ID_Vendedor" in df_ventas.columns:
             df_ventas_v = df_ventas[df_ventas["ID_Vendedor"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_vendedor_str].copy()
@@ -876,7 +876,7 @@ with col_logo:
 
 precio_regular_jalisco = extraer_precio_gasolina_real()
 
-# --- PANEL SIDEBAR SIMPLIFICADO ---
+# --- PANEL SIDEBAR ---
 st.sidebar.header("📅 Calendario Operativo")
 lista_anios = [2026, 2027, 2028, 2029, 2030]
 anio_seleccionado = st.sidebar.selectbox("Seleccione el Año Operativo:", lista_anios, index=0)
@@ -898,7 +898,7 @@ if df_cl is not None and df_vn is not None:
     
     id_vendedor = vendedor_seleccionado.split(" - ")[0].strip().split(".")[0]
     
-    # 2. Extracción de la URL dinámicamente desde la columna <URL ventas> de vendedores.xlsx
+    # 2. Extracción dinámica de la URL desde la columna <URL ventas> en vendedores.xlsx
     url_ventas_vendedor = URL_VENTAS_DEFAULT
     col_url_v = next((c for c in df_vn.columns if re.search(r"url[_\s]*ventas", c, re.IGNORECASE)), None)
     if col_url_v:
@@ -1195,7 +1195,7 @@ if df_cl is not None and df_vn is not None:
                 anio_evaluado=anio_eval_num,
                 df_agenda_vendedor=df_agenda_mes,
                 f_ranking=URL_RANKING_FERRETEROS,
-                url_ventas_dinamica=url_ventas_vendedor, # Se pasa la URL extraída dinámicamente
+                url_ventas_dinamica=url_ventas_vendedor, # Se pasa la URL dinamica del vendedor
                 f_demanda=URL_DEMANDA,
                 f_master=URL_MASTER_CLIENTES,
                 cliente_id_seleccionado=cl_id_pass
@@ -1208,7 +1208,7 @@ if df_cl is not None and df_vn is not None:
                 st.session_state["pdf_cliente_sel"] = cliente_sel_sug
                 st.session_state["pdf_mes_nombre"] = mes_eval_tupla[0]
                 st.session_state["pdf_anio"] = anio_eval_num
-                st.success(f"Cálculo finalizado exitosamente extrayendo datos de: {url_ventas_vendedor}")
+                st.success(f"Análisis generado con éxito leyendo las ventas desde: {url_ventas_vendedor}")
 
         if "res_dict_sugerido" in st.session_state:
             res_dict = st.session_state["res_dict_sugerido"]
