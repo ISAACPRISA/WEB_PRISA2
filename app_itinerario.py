@@ -30,7 +30,7 @@ URL_RANKING_FERRETEROS = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/RAN
 URL_CLIENTES = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/clientes.xlsx?raw=true"
 URL_PROSPECTOS = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/prospectos.xlsx?raw=true"
 URL_VENDEDORES = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/vendedores.xlsx?raw=true"
-URL_VENTAS_FERRETEROS = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/VENTAS%20FERRETEROS.xlsx?raw=true"
+URL_VENTAS_DEFAULT = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/VENTAS%20FERRETEROS.xlsx?raw=true"
 
 # =============================================================================
 # 0. CONFIGURACIÓN DE APIS Y EXTRACCIÓN DE GASOLINA (CACHÉ 24 HORAS)
@@ -99,13 +99,21 @@ def desduplicar_columnas(df):
     df.columns = cols
     return df
 
+def formatear_url_raw_github(url):
+    """Asegura que las URLs de GitHub apunten a la versión raw para la descarga correcta."""
+    if isinstance(url, str) and "github.com" in url and not url.endswith("?raw=true"):
+        return url.replace("/blob/", "/").replace("github.com", "raw.githubusercontent.com")
+    return url
+
+@st.cache_data(ttl=3600)
 def cargar_dataframe_flexible(file_input, nombre_defecto="", sheet_name=0):
     if file_input is None:
         return None
     try:
         if isinstance(file_input, str):
-            if file_input.startswith("http://") or file_input.startswith("https://"):
-                df = pd.read_excel(file_input, sheet_name=sheet_name)
+            url_procesada = formatear_url_raw_github(file_input)
+            if url_procesada.startswith("http://") or url_procesada.startswith("https://"):
+                df = pd.read_excel(url_procesada, sheet_name=sheet_name)
             elif os.path.exists(file_input):
                 df = pd.read_excel(file_input, sheet_name=sheet_name)
             else:
@@ -128,6 +136,17 @@ def homologar_columna_cliente(df):
         df["ID_Cliente"] = df["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     return df
 
+def homologar_columna_vendedor(df):
+    if df is None:
+        return None
+    for col in df.columns:
+        if re.search(r"^vendedor$|^id[_\s]*vendedor$", col, re.IGNORECASE):
+            df.rename(columns={col: "ID_Vendedor"}, inplace=True)
+            break
+    if "ID_Vendedor" in df.columns:
+        df["ID_Vendedor"] = df["ID_Vendedor"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    return df
+
 # =============================================================================
 # 1. PROCESAMIENTO DE DATOS MAESTROS
 # =============================================================================
@@ -138,6 +157,10 @@ def procesar_datos_maestros(file_clientes, file_vendedores):
     df_clientes.columns = df_clientes.columns.str.strip().str.replace('\n', ' ')
     df_vendedores.columns = df_vendedores.columns.str.strip().str.replace('\n', ' ')
     
+    df_clientes = homologar_columna_cliente(df_clientes)
+    df_clientes = homologar_columna_vendedor(df_clientes)
+    df_vendedores = homologar_columna_vendedor(df_vendedores)
+
     if 'Nombre' in df_vendedores.columns:
         df_vendedores = df_vendedores[df_vendedores['Nombre'].str.upper().str.strip().isin([v.upper() for v in VENDEDORES_AUTORIZADOS])].reset_index(drop=True)
     
@@ -456,11 +479,9 @@ def generar_reporte_pdf(res_dict, cliente_sel, mes_nombre, anio):
         data_tabla = []
         cols = ["Marca", "Código de Producto", "DESCRIPCIÓN", "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"]
         
-        # Encabezados
         header_row = [Paragraph(f"<b>{c}</b>", cell_header_style) for c in cols]
         data_tabla.append(header_row)
 
-        # Filas
         for _, row in df_sec.iterrows():
             row_data = []
             for col in cols:
@@ -468,7 +489,6 @@ def generar_reporte_pdf(res_dict, cliente_sel, mes_nombre, anio):
                 row_data.append(Paragraph(val, cell_style))
             data_tabla.append(row_data)
 
-        # Configuración de anchos de columna para Hoja Carta Horizontal
         tabla = Table(data_tabla, colWidths=[90, 80, 260, 50, 50, 60, 90], repeatRows=1)
         tabla.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#FF4B4B')),
@@ -493,7 +513,7 @@ def procesar_pedido_sugerido(
     anio_evaluado,
     df_agenda_vendedor,
     f_ranking,
-    f_ventas,
+    url_ventas_dinamica,
     f_demanda,
     f_master,
     cliente_id_seleccionado=None,
@@ -501,12 +521,12 @@ def procesar_pedido_sugerido(
     try:
         df_master = cargar_dataframe_flexible(f_master, "MASTER DE CLIENTES.xlsx")
         df_ranking = cargar_dataframe_flexible(f_ranking, "RANKING FERRETEROS.xlsx")
-        df_ventas = cargar_dataframe_flexible(f_ventas, "VENTAS FERRETEROS.xlsx")
+        df_ventas = cargar_dataframe_flexible(url_ventas_dinamica, "VENTAS DINAMICAS.xlsx")
         df_demanda = cargar_dataframe_flexible(f_demanda, "Demanda.xlsx")
 
         missing = [
             f for f, obj in zip(
-                ["MASTER DE CLIENTES.xlsx", "RANKING FERRETEROS.xlsx", "VENTAS FERRETEROS.xlsx", "Demanda.xlsx"],
+                ["MASTER DE CLIENTES.xlsx", "RANKING FERRETEROS.xlsx", f"VENTAS ({url_ventas_dinamica})", "Demanda.xlsx"],
                 [df_master, df_ranking, df_ventas, df_demanda],
             ) if obj is None
         ]
@@ -531,11 +551,22 @@ def procesar_pedido_sugerido(
             df_marcas = pd.DataFrame(columns=["Codigo de Producto", "Marca"])
 
         if "TOTAL" not in df_ventas.columns:
-            return None, "La columna 'TOTAL' no se encuentra en el archivo VENTAS FERRETEROS.xlsx.", None
+            return None, "La columna 'TOTAL' no se encuentra en la base de ventas procesada.", None
 
         df_master = homologar_columna_cliente(df_master)
+        df_master = homologar_columna_vendedor(df_master)
+
         df_ventas = homologar_columna_cliente(df_ventas)
+        df_ventas = homologar_columna_vendedor(df_ventas)
+
         df_demanda = homologar_columna_cliente(df_demanda)
+
+        # Filtrar ventas por el vendedor evaluado si está presente la columna
+        id_vendedor_str = str(id_vendedor).strip()
+        if "ID_Vendedor" in df_ventas.columns:
+            df_ventas_v = df_ventas[df_ventas["ID_Vendedor"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_vendedor_str].copy()
+            if not df_ventas_v.empty:
+                df_ventas = df_ventas_v
 
         if "Document Date" in df_demanda.columns and "Fecha" not in df_demanda.columns:
             df_demanda.rename(columns={"Document Date": "Fecha"}, inplace=True)
@@ -550,7 +581,6 @@ def procesar_pedido_sugerido(
             df_demanda["Año"] = df_demanda["Fecha_dt"].dt.year
             df_demanda["Mes"] = df_demanda["Fecha_dt"].dt.month
 
-        # Evaluación global o filtrada por cliente seleccionado
         if cliente_id_seleccionado and str(cliente_id_seleccionado).strip() != "-":
             id_sel_clean = str(cliente_id_seleccionado).split("-")[0].strip()
             df_agenda_eval = df_agenda_vendedor[df_agenda_vendedor["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_sel_clean].copy()
@@ -797,7 +827,6 @@ def obtener_ruta_calles_osrm(puntos):
 # =============================================================================
 st.set_page_config(layout="wide")
 
-# Estilos CSS generales y botón de descarga personalizado
 st.markdown("""
     <style>
     th[role="columnheader"] div {
@@ -811,7 +840,6 @@ st.markdown("""
         vertical-align: bottom !important;
     }
     
-    /* Estilo para el botón de descarga del PDF en color rojo empresarial */
     div.stDownloadButton > button {
         background-color: #FF4B4B !important;
         color: white !important;
@@ -850,7 +878,6 @@ lista_meses = [("Enero", 1), ("Febrero", 2), ("Marzo", 3), ("Abril", 4), ("Mayo"
                 ("Julio", 7), ("Agosto", 8), ("Septiembre", 9), ("Octubre", 10), ("Noviembre", 11), ("Diciembre", 12)]
 mes_nombre, mes_numerico = st.sidebar.selectbox("Seleccione el Mes de Distribución:", lista_meses, index=8, format_func=lambda x: x[0])
 
-# Carga directa mediante las URLs
 df_prospectos_raw = procesar_base_prospectos(URL_PROSPECTOS)
 df_cl, df_vn = procesar_datos_maestros(URL_CLIENTES, URL_VENDEDORES)
 
@@ -862,9 +889,19 @@ if df_cl is not None and df_vn is not None:
     vendedor_seleccionado = st.selectbox("Seleccione el Vendedor para Desplegar Agenda Mensual:", vendedor_opciones)
     
     id_vendedor = vendedor_seleccionado.split(" - ")[0].strip().split(".")[0]
+    
+    # Obtener URL personalizada de ventas desde vendedores.xlsx si existe
+    url_ventas_vendedor = URL_VENTAS_DEFAULT
+    col_url_v = next((c for c in df_vn.columns if re.search(r"url[_\s]*ventas", c, re.IGNORECASE)), None)
+    if col_url_v:
+        row_vend = df_vn[df_vn['ID_Vendedor'] == id_vendedor]
+        if not row_vend.empty and pd.notna(row_vend.iloc[0][col_url_v]):
+            val_url = str(row_vend.iloc[0][col_url_v]).strip()
+            if val_url.startswith("http"):
+                url_ventas_vendedor = val_url
+
     df_agenda_mes, inicio_coords, df_universo = generar_agenda_dinamica(id_vendedor, df_cl, df_vn, anio_seleccionado, mes_numerico)
     
-    # Pestañas principales
     tab_rutas, tab_sugerido, tab_prospectos_sug = st.tabs([
         "🗺️ Rutas y Logística", 
         "📊 Pedido Sugerido y Análisis", 
@@ -1096,7 +1133,7 @@ if df_cl is not None and df_vn is not None:
                 )
 
     # -------------------------------------------------------------------------
-    # SEGUNDA PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS (DESCARGA NATIVA A PDF)
+    # SEGUNDA PESTAÑA: PEDIDO SUGERIDO Y ANÁLISIS
     # -------------------------------------------------------------------------
     with tab_sugerido:
         st.header("📊 Módulo de Pedido Sugerido por Marca")
@@ -1150,7 +1187,7 @@ if df_cl is not None and df_vn is not None:
                 anio_evaluado=anio_eval_num,
                 df_agenda_vendedor=df_agenda_mes,
                 f_ranking=URL_RANKING_FERRETEROS,
-                f_ventas=URL_VENTAS_FERRETEROS,
+                url_ventas_dinamica=url_ventas_vendedor,
                 f_demanda=URL_DEMANDA,
                 f_master=URL_MASTER_CLIENTES,
                 cliente_id_seleccionado=cl_id_pass
@@ -1163,13 +1200,11 @@ if df_cl is not None and df_vn is not None:
                 st.session_state["pdf_cliente_sel"] = cliente_sel_sug
                 st.session_state["pdf_mes_nombre"] = mes_eval_tupla[0]
                 st.session_state["pdf_anio"] = anio_eval_num
-                st.success("Cálculo finalizado exitosamente.")
+                st.success(f"Cálculo finalizado exitosamente extrayendo datos de: {url_ventas_vendedor}")
 
-        # Si existen datos calculados en la sesión, mostramos el botón PDF y las tablas
         if "res_dict_sugerido" in st.session_state:
             res_dict = st.session_state["res_dict_sugerido"]
 
-            # --- BOTÓN DE DESCARGA PDF ---
             st.markdown("---")
             col_izq_dummy, col_der_pdf = st.columns([0.6, 0.4])
             with col_der_pdf:
@@ -1242,7 +1277,7 @@ if df_cl is not None and df_vn is not None:
             desplegar_tabla_agrupada_por_marca(res_dict["oportunidades"], "4. OPORTUNIDADES (PRODUCTOS DE CANAL)")
 
     # -------------------------------------------------------------------------
-    # TERCERA PESTAÑA: PEDIDO SUGERIDO CLIENTES NUEVOS (SIN MAPA)
+    # TERCERA PESTAÑA: PEDIDO SUGERIDO CLIENTES NUEVOS
     # -------------------------------------------------------------------------
     with tab_prospectos_sug:
         st.header("✨ Pedido Sugerido Clientes Nuevos")
