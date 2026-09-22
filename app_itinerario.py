@@ -33,7 +33,7 @@ URL_VENDEDORES = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/vendedores.
 URL_VENTAS_DEFAULT = "https://github.com/ISAACPRISA/WEB_PRISA2/blob/main/VENTAS%20FERRETEROS.xlsx?raw=true"
 
 # =============================================================================
-# 0. CONFIGURACIÓN DE APIS Y FUNCIONES DE HOMOLOGACIÓN Y CACHÉ
+# 0. CONFIGURACIÓN DE APIS Y EXTRACCIÓN DE GASOLINA (CACHÉ 24 HORAS)
 # =============================================================================
 MAPBOX_TOKEN = "pk.eyJ1Ijoia2FyZW5tYWNpYXMxIiwiYSI6ImNtcWlma2pzODA2bW4ycG9hdjI0MjBiZ20ifQ.7NURZ9JkaPZ49hWRhfSDOg" 
 MAPBOX_STYLE = "streets-v12" 
@@ -126,11 +126,10 @@ def cargar_dataframe_flexible(file_input, nombre_defecto="", sheet_name=0):
         return None
 
 def homologar_columna_cliente(df):
-    """Homologa 'Codigo de Cliente', 'Codigo Cliente de' e 'ID_Cliente' a 'ID_Cliente'."""
     if df is None:
         return None
     for col in df.columns:
-        if re.search(r"c[oó]digo[_\s]*de[_\s]*cliente|c[oó]digo[_\s]*cliente[_\s]*de|cod[_\s]*cliente|id[_\s]*cliente", col, re.IGNORECASE):
+        if re.search(r"c[oó]digo[_\s]*de[_\s]*cliente|cod[_\s]*cliente|id[_\s]*cliente", col, re.IGNORECASE):
             df.rename(columns={col: "ID_Cliente"}, inplace=True)
             break
     if "ID_Cliente" in df.columns:
@@ -138,7 +137,6 @@ def homologar_columna_cliente(df):
     return df
 
 def homologar_columna_vendedor(df):
-    """Homologa 'Vendedor' e 'ID_Vendedor' a 'ID_Vendedor'."""
     if df is None:
         return None
     for col in df.columns:
@@ -159,7 +157,6 @@ def procesar_datos_maestros(file_clientes, file_vendedores):
     df_clientes.columns = df_clientes.columns.str.strip().str.replace('\n', ' ')
     df_vendedores.columns = df_vendedores.columns.str.strip().str.replace('\n', ' ')
     
-    # Aplicar la homologación para clientes.xlsx y vendedores.xlsx
     df_clientes = homologar_columna_cliente(df_clientes)
     df_clientes = homologar_columna_vendedor(df_clientes)
     df_vendedores = homologar_columna_vendedor(df_vendedores)
@@ -520,9 +517,9 @@ def procesar_pedido_sugerido(
     f_demanda,
     f_master,
     cliente_id_seleccionado=None,
+    df_cat_clientes=None
 ):
     try:
-        # Carga de dataframes desde las URLs dinámicas e individuales
         df_master = cargar_dataframe_flexible(f_master, "MASTER DE CLIENTES.xlsx")
         df_ranking = cargar_dataframe_flexible(f_ranking, "RANKING FERRETEROS.xlsx")
         df_ventas = cargar_dataframe_flexible(url_ventas_dinamica, "VENTAS DINAMICAS.xlsx")
@@ -537,10 +534,11 @@ def procesar_pedido_sugerido(
         if missing:
             return None, f"Faltan los siguientes archivos necesarios: {', '.join(missing)}", None
 
-        # Carga de marcas
+        # Carga del catálogo de marcas
         df_marcas = cargar_dataframe_flexible(URL_CATALOGO_MARCAS, "CATALOGO DE MARCAS POR PRODUCTO.xlsx")
         if df_marcas is not None and not df_marcas.empty:
             df_marcas.columns = df_marcas.columns.astype(str).str.strip()
+            
             col_cod_m = next((c for c in df_marcas.columns if re.search(r"c[oó]digo[_\s]*de[_\s]*producto|cod[_\s]*prod|producto", c, re.IGNORECASE)), None)
             col_marca_m = next((c for c in df_marcas.columns if re.search(r"marca", c, re.IGNORECASE)), None)
             
@@ -556,19 +554,15 @@ def procesar_pedido_sugerido(
         if "TOTAL" not in df_ventas.columns:
             return None, "La columna 'TOTAL' no se encuentra en la base de ventas procesada.", None
 
-        # HOMOLOGACIÓN DE COLUMNAS SEGÚN LAS ESPECIFICACIONES RECIBIDAS
-        # 1. MASTER DE CLIENTES -> <Vendedor> e <ID_Vendedor>, <Codigo de Cliente> e <ID_Cliente>
         df_master = homologar_columna_cliente(df_master)
         df_master = homologar_columna_vendedor(df_master)
 
-        # 2. VENTAS DINAMICAS -> <Vendedor> e <ID_Vendedor>, <Codigo de Cliente> e <ID_Cliente>
         df_ventas = homologar_columna_cliente(df_ventas)
         df_ventas = homologar_columna_vendedor(df_ventas)
 
-        # 3. Demanda -> <Codigo de Cliente> homologado a <ID_Cliente>
         df_demanda = homologar_columna_cliente(df_demanda)
 
-        # Filtrar ventas por el vendedor evaluado si está presente la columna ID_Vendedor
+        # Filtrar ventas por el vendedor evaluado si está presente la columna
         id_vendedor_str = str(id_vendedor).strip()
         if "ID_Vendedor" in df_ventas.columns:
             df_ventas_v = df_ventas[df_ventas["ID_Vendedor"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_vendedor_str].copy()
@@ -588,17 +582,46 @@ def procesar_pedido_sugerido(
             df_demanda["Año"] = df_demanda["Fecha_dt"].dt.year
             df_demanda["Mes"] = df_demanda["Fecha_dt"].dt.month
 
-        if cliente_id_seleccionado and str(cliente_id_seleccionado).strip() != "-":
-            id_sel_clean = str(cliente_id_seleccionado).split("-")[0].strip()
-            df_agenda_eval = df_agenda_vendedor[df_agenda_vendedor["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_sel_clean].copy()
-        else:
-            df_agenda_eval = df_agenda_vendedor[df_agenda_vendedor["ID_Cliente"] != "-"].copy()
+        # ---------------------------------------------------------------------
+        # LÓGICA DE CLIENTES EVALUADOS (CON FALLBACK / DESVINCULACIÓN SI NO HAY AGENDA)
+        # ---------------------------------------------------------------------
+        df_agenda_eval = pd.DataFrame()
+        if df_agenda_vendedor is not None and not df_agenda_vendedor.empty and "ID_Cliente" in df_agenda_vendedor.columns:
+            if cliente_id_seleccionado and str(cliente_id_seleccionado).strip() != "-":
+                id_sel_clean = str(cliente_id_seleccionado).split("-")[0].strip()
+                df_agenda_eval = df_agenda_vendedor[df_agenda_vendedor["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_sel_clean].copy()
+            else:
+                df_agenda_eval = df_agenda_vendedor[df_agenda_vendedor["ID_Cliente"] != "-"].copy()
 
+        # Si no hay agenda o resultó vacía, realizar desvinculación cargando desde el catálogo general de clientes
         if df_agenda_eval.empty:
-            return None, "No hay clientes agendados para evaluar.", None
+            if df_cat_clientes is not None and not df_cat_clientes.empty and "ID_Cliente" in df_cat_clientes.columns:
+                df_v_cat = df_cat_clientes.copy()
+                col_v_cat = next((c for c in df_v_cat.columns if c in ["ID_Vendedor_Asignado", "ID_Vendedor"]), None)
+                if col_v_cat:
+                    df_v_cat = df_v_cat[df_v_cat[col_v_cat].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_vendedor_str]
+                
+                if cliente_id_seleccionado and str(cliente_id_seleccionado).strip() != "-":
+                    id_sel_clean = str(cliente_id_seleccionado).split("-")[0].strip()
+                    df_v_cat = df_v_cat[df_v_cat["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_sel_clean]
 
-        clientes_dia = df_agenda_eval[["ID_Cliente", "Cliente"]].drop_duplicates()
+                if "Cliente" in df_v_cat.columns:
+                    clientes_dia = df_v_cat[["ID_Cliente", "Cliente"]].drop_duplicates()
+                elif "Nombre_Cliente" in df_v_cat.columns:
+                    clientes_dia = df_v_cat[["ID_Cliente", "Nombre_Cliente"]].rename(columns={"Nombre_Cliente": "Cliente"}).drop_duplicates()
+                else:
+                    clientes_dia = df_v_cat[["ID_Cliente"]].copy()
+                    clientes_dia["Cliente"] = clientes_dia["ID_Cliente"]
+                    clientes_dia = clientes_dia.drop_duplicates()
+            else:
+                clientes_dia = pd.DataFrame(columns=["ID_Cliente", "Cliente"])
+        else:
+            clientes_dia = df_agenda_eval[["ID_Cliente", "Cliente"]].drop_duplicates()
+
         clientes_dia["ID_Cliente"] = clientes_dia["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+
+        if clientes_dia.empty:
+            return None, "No hay clientes agendados ni registrados para evaluar con el vendedor seleccionado.", None
 
         df_ranking.columns = df_ranking.columns.astype(str).str.strip()
         df_ranking = desduplicar_columnas(df_ranking)
@@ -876,7 +899,7 @@ with col_logo:
 
 precio_regular_jalisco = extraer_precio_gasolina_real()
 
-# --- PANEL SIDEBAR ---
+# --- PANEL SIDEBAR SIMPLIFICADO ---
 st.sidebar.header("📅 Calendario Operativo")
 lista_anios = [2026, 2027, 2028, 2029, 2030]
 anio_seleccionado = st.sidebar.selectbox("Seleccione el Año Operativo:", lista_anios, index=0)
@@ -892,13 +915,12 @@ if df_cl is not None and df_vn is not None:
     df_cl = generar_rutas_por_densidad(df_cl, df_vn)
     st.sidebar.success("Bases conectadas por URL.")
     
-    # 1. Menú de Selección del Vendedor
     vendedor_opciones = df_vn['ID_Vendedor'].astype(str) + " - " + df_vn['Nombre'].astype(str)
     vendedor_seleccionado = st.selectbox("Seleccione el Vendedor para Desplegar Agenda Mensual:", vendedor_opciones)
     
     id_vendedor = vendedor_seleccionado.split(" - ")[0].strip().split(".")[0]
     
-    # 2. Extracción dinámica de la URL desde la columna <URL ventas> en vendedores.xlsx
+    # Obtener URL personalizada de ventas desde vendedores.xlsx si existe
     url_ventas_vendedor = URL_VENTAS_DEFAULT
     col_url_v = next((c for c in df_vn.columns if re.search(r"url[_\s]*ventas", c, re.IGNORECASE)), None)
     if col_url_v:
@@ -1165,15 +1187,31 @@ if df_cl is not None and df_vn is not None:
                 key="anio_sug_input_independiente"
             )
 
+        # ---------------------------------------------------------------------
+        # CONSTRUCCIÓN DE OPCIONES CON MECANISMO DE DESVINCULACIÓN (FALLBACK)
+        # ---------------------------------------------------------------------
         opciones_clientes = []
-        if df_agenda_mes is not None and not df_agenda_mes.empty:
+        origen_desvinculado = False
+
+        if df_agenda_mes is not None and not df_agenda_mes.empty and "ID_Cliente" in df_agenda_mes.columns:
             cls_unicos = df_agenda_mes[df_agenda_mes['ID_Cliente'] != '-'][['ID_Cliente', 'Cliente']].drop_duplicates()
             for _, r_cl in cls_unicos.iterrows():
                 opciones_clientes.append(f"{r_cl['ID_Cliente']} - {r_cl['Cliente']}")
-        elif df_universo is not None and not df_universo.empty:
-            cls_unicos = df_universo[['ID_Cliente', 'Cliente']].drop_duplicates()
-            for _, r_cl in cls_unicos.iterrows():
-                opciones_clientes.append(f"{r_cl['ID_Cliente']} - {r_cl['Cliente']}")
+
+        # Si no hay agenda o la lista resultó vacía, DESVINCULAR y cargar desde el catálogo de clientes del vendedor
+        if not opciones_clientes and df_cl is not None and not df_cl.empty:
+            col_v = next((c for c in df_cl.columns if c in ["ID_Vendedor_Asignado", "ID_Vendedor"]), None)
+            if col_v:
+                df_cl_vend = df_cl[df_cl[col_v].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_vendedor]
+            else:
+                df_cl_vend = df_cl.copy()
+
+            if not df_cl_vend.empty and "ID_Cliente" in df_cl_vend.columns:
+                origen_desvinculado = True
+                col_nombre_cl = "Cliente" if "Cliente" in df_cl_vend.columns else ("Nombre_Cliente" if "Nombre_Cliente" in df_cl_vend.columns else None)
+                for _, r_cl in df_cl_vend.drop_duplicates(subset=["ID_Cliente"]).iterrows():
+                    nom = r_cl[col_nombre_cl] if col_nombre_cl and pd.notna(r_cl[col_nombre_cl]) else r_cl["ID_Cliente"]
+                    opciones_clientes.append(f"{r_cl['ID_Cliente']} - {nom}")
 
         with c_sug3:
             cliente_sel_sug = st.selectbox(
@@ -1181,6 +1219,9 @@ if df_cl is not None and df_vn is not None:
                 ["TODOS"] + sorted(opciones_clientes),
                 key="cliente_sug_input_independiente"
             )
+
+        if origen_desvinculado:
+            st.info("ℹ️ **Aviso de Desvinculación:** No se encontró una agenda de rutas configurada para este vendedor en el mes/año seleccionado. Se han desvinculado las rutas y cargado **todos los clientes asignados al vendedor** desde el catálogo general.")
 
         col_btn1, col_btn2 = st.columns([0.3, 0.7])
         with col_btn1:
@@ -1195,10 +1236,11 @@ if df_cl is not None and df_vn is not None:
                 anio_evaluado=anio_eval_num,
                 df_agenda_vendedor=df_agenda_mes,
                 f_ranking=URL_RANKING_FERRETEROS,
-                url_ventas_dinamica=url_ventas_vendedor, # Se pasa la URL dinamica del vendedor
+                url_ventas_dinamica=url_ventas_vendedor,
                 f_demanda=URL_DEMANDA,
                 f_master=URL_MASTER_CLIENTES,
-                cliente_id_seleccionado=cl_id_pass
+                cliente_id_seleccionado=cl_id_pass,
+                df_cat_clientes=df_cl
             )
 
             if err_msg:
@@ -1208,7 +1250,7 @@ if df_cl is not None and df_vn is not None:
                 st.session_state["pdf_cliente_sel"] = cliente_sel_sug
                 st.session_state["pdf_mes_nombre"] = mes_eval_tupla[0]
                 st.session_state["pdf_anio"] = anio_eval_num
-                st.success(f"Análisis generado con éxito leyendo las ventas desde: {url_ventas_vendedor}")
+                st.success(f"Cálculo finalizado exitosamente extrayendo datos de: {url_ventas_vendedor}")
 
         if "res_dict_sugerido" in st.session_state:
             res_dict = st.session_state["res_dict_sugerido"]
