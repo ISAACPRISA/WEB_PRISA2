@@ -427,7 +427,7 @@ def generar_agenda_dinamica(vendedor_id, df_clientes, df_vendedores, anio, mes):
 # 3. PROCESAMIENTO DEL PEDIDO SUGERIDO Y GENERACIÓN DE PDF
 # =============================================================================
 def generar_reporte_pdf(res_dict, cliente_sel, mes_nombre, anio):
-    """Genera un archivo PDF vectorial descargable conteniendo todas las tablas del pedido sugerido."""
+    """Genera un archivo PDF vectorial descargable conteniendo todas las tablas del pedido sugerido permitiendo múltiples tablas por página."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, 
@@ -535,33 +535,24 @@ def procesar_pedido_sugerido(
 
         # Carga del catálogo de marcas
         df_marcas = cargar_dataframe_flexible(URL_CATALOGO_MARCAS, "CATALOGO DE MARCAS POR PRODUCTO.xlsx")
+        mapa_marcas = {}
         if df_marcas is not None and not df_marcas.empty:
             df_marcas.columns = df_marcas.columns.astype(str).str.strip()
-            
             col_cod_m = next((c for c in df_marcas.columns if re.search(r"c[oó]digo[_\s]*de[_\s]*producto|cod[_\s]*prod|producto", c, re.IGNORECASE)), None)
             col_marca_m = next((c for c in df_marcas.columns if re.search(r"marca", c, re.IGNORECASE)), None)
-            
             if col_cod_m and col_marca_m:
-                df_marcas = df_marcas[[col_cod_m, col_marca_m]].rename(columns={col_cod_m: "Codigo de Producto", col_marca_m: "Marca"})
-                df_marcas["Codigo de Producto"] = df_marcas["Codigo de Producto"].astype(str).str.strip()
-                df_marcas = df_marcas.drop_duplicates(subset=["Codigo de Producto"])
-            else:
-                df_marcas = pd.DataFrame(columns=["Codigo de Producto", "Marca"])
-        else:
-            df_marcas = pd.DataFrame(columns=["Codigo de Producto", "Marca"])
+                df_marcas[col_cod_m] = df_marcas[col_cod_m].astype(str).str.strip()
+                mapa_marcas = df_marcas.drop_duplicates(subset=[col_cod_m]).set_index(col_cod_m)[col_marca_m].to_dict()
 
         if "TOTAL" not in df_ventas.columns:
             return None, "La columna 'TOTAL' no se encuentra en la base de ventas procesada.", None
 
         df_master = homologar_columna_cliente(df_master)
         df_master = homologar_columna_vendedor(df_master)
-
         df_ventas = homologar_columna_cliente(df_ventas)
         df_ventas = homologar_columna_vendedor(df_ventas)
-
         df_demanda = homologar_columna_cliente(df_demanda)
 
-        # Filtrar ventas por el vendedor evaluado si está presente la columna
         id_vendedor_str = str(id_vendedor).strip()
         if "ID_Vendedor" in df_ventas.columns:
             df_ventas_v = df_ventas[df_ventas["ID_Vendedor"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_vendedor_str].copy()
@@ -590,8 +581,7 @@ def procesar_pedido_sugerido(
         if df_agenda_eval.empty:
             return None, "No hay clientes agendados para evaluar.", None
 
-        clientes_dia = df_agenda_eval[["ID_Cliente", "Cliente"]].drop_duplicates()
-        clientes_dia["ID_Cliente"] = clientes_dia["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        clientes_evaluar = df_agenda_eval["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).unique()
 
         df_ranking.columns = df_ranking.columns.astype(str).str.strip()
         df_ranking = desduplicar_columnas(df_ranking)
@@ -601,8 +591,6 @@ def procesar_pedido_sugerido(
                 mapa_cols_rk[col] = "Codigo de Producto"
             elif re.search(r"descripci[oó]n", col, re.IGNORECASE):
                 mapa_cols_rk[col] = "Descripción"
-            elif re.search(r"ferretero", col, re.IGNORECASE):
-                mapa_cols_rk[col] = "Ferreteros"
         df_ranking.rename(columns=mapa_cols_rk, inplace=True)
         df_ranking = desduplicar_columnas(df_ranking)
         if "Codigo de Producto" in df_ranking.columns:
@@ -645,100 +633,107 @@ def procesar_pedido_sugerido(
         m_m2, a_m2 = restar_meses(mes_actual, anio_actual, 2)
         m_m1, a_m1 = restar_meses(mes_actual, anio_actual, 1)
 
+        col_cant_v = "Piezas_DF" if "Piezas_DF" in df_ventas.columns else ("Piezas" if "Piezas" in df_ventas.columns else "TOTAL")
+        col_dem_qty = "Incoming Orders Qty" if "Incoming Orders Qty" in df_demanda.columns else ("TOTAL" if "TOTAL" in df_demanda.columns else None)
+
+        # Filtrado previo masivo
+        df_ventas_filtrado = df_ventas[df_ventas["ID_Cliente"].isin(clientes_evaluar)].copy()
+        df_ventas_filtrado["TOTAL_num"] = pd.to_numeric(df_ventas_filtrado["TOTAL"], errors="coerce").fillna(0)
+        df_ventas_filtrado["CANT_num"] = pd.to_numeric(df_ventas_filtrado[col_cant_v], errors="coerce").fillna(0)
+
+        df_demanda_filtrado = df_demanda[df_demanda["ID_Cliente"].isin(clientes_evaluar)].copy()
+        if col_dem_qty:
+            df_demanda_filtrado["DEM_num"] = pd.to_numeric(df_demanda_filtrado[col_dem_qty], errors="coerce").fillna(0)
+        else:
+            df_demanda_filtrado["DEM_num"] = 0.0
+
+        # Mapeo general de descripciones
+        mapa_descripciones = df_ventas_filtrado.dropna(subset=["DESCRIPCIÓN"]).drop_duplicates(subset=["Codigo de Producto"]).set_index("Codigo de Producto")["DESCRIPCIÓN"].to_dict()
+
+        # Pre-cálculo masivo de ventas históricas por mes
+        df_v_aa = df_ventas_filtrado[(df_ventas_filtrado["Año"] == (anio_actual - 1)) & (df_ventas_filtrado["Mes"] == mes_actual)].groupby(["ID_Cliente", "Codigo de Producto"])["CANT_num"].sum()
+        df_v_m3 = df_ventas_filtrado[(df_ventas_filtrado["Año"] == a_m3) & (df_ventas_filtrado["Mes"] == m_m3)].groupby(["ID_Cliente", "Codigo de Producto"])["CANT_num"].sum()
+        df_v_m2 = df_ventas_filtrado[(df_ventas_filtrado["Año"] == a_m2) & (df_ventas_filtrado["Mes"] == m_m2)].groupby(["ID_Cliente", "Codigo de Producto"])["CANT_num"].sum()
+        df_v_m1 = df_ventas_filtrado[(df_ventas_filtrado["Año"] == a_m1) & (df_ventas_filtrado["Mes"] == m_m1)].groupby(["ID_Cliente", "Codigo de Producto"])["CANT_num"].sum()
+
+        # Pre-cálculo de demanda actual
+        df_dem_act = df_demanda_filtrado[(df_demanda_filtrado["Año"] == anio_actual) & (df_demanda_filtrado["Mes"] == mes_actual)].groupby(["ID_Cliente", "Codigo de Producto"])["DEM_num"].sum()
+
+        # Pre-cálculo de meses con venta en el año actual
+        df_v_ene_act = df_ventas_filtrado[(df_ventas_filtrado["Año"] == anio_actual) & (df_ventas_filtrado["Mes"] >= 1) & (df_ventas_filtrado["Mes"] <= mes_actual) & (df_ventas_filtrado["CANT_num"] > 0)]
+        meses_con_venta_series = df_v_ene_act.groupby(["ID_Cliente", "Codigo de Producto"])["Mes"].nunique()
+
+        # Pre-cálculo de último mes de venta
+        v_hist_validas = df_ventas_filtrado[(df_ventas_filtrado["CANT_num"] >= 1) & df_ventas_filtrado["Fecha_dt"].notna()]
+        u_mes_series = v_hist_validas.groupby(["ID_Cliente", "Codigo de Producto"])["Fecha_dt"].max()
+
+        prods_top = set()
+        if "Codigo de Producto" in df_ranking.columns and not df_ranking.empty:
+            prods_top = set(df_ranking["Codigo de Producto"].dropna().head(50).unique())
+            mapa_desc_rk = df_ranking.dropna(subset=["Descripción"]).drop_duplicates(subset=["Codigo de Producto"]).set_index("Codigo de Producto")["Descripción"].to_dict()
+            for p, d in mapa_desc_rk.items():
+                if p not in mapa_descripciones:
+                    mapa_descripciones[p] = d
+
         registros_sugerido_8020 = []
         registros_intermitente = []
         registros_recuperar_20 = []
         registros_oportunidades = []
 
-        col_cant_v = "Piezas_DF" if "Piezas_DF" in df_ventas.columns else ("Piezas" if "Piezas" in df_ventas.columns else "TOTAL")
-
-        for _, cl_row in clientes_dia.iterrows():
-            id_cl, nombre_cl = cl_row["ID_Cliente"], cl_row["Cliente"]
-
-            df_v_cl = df_ventas[df_ventas["ID_Cliente"] == id_cl].copy()
+        # Vectorización y agregación por cliente
+        for id_cl in clientes_evaluar:
+            df_v_cl = df_ventas_filtrado[df_ventas_filtrado["ID_Cliente"] == id_cl]
             if df_v_cl.empty:
                 continue
 
-            df_v_2026 = df_v_cl[df_v_cl["Año"] == anio_actual].copy()
+            df_v_2026 = df_v_cl[df_v_cl["Año"] == anio_actual]
             if not df_v_2026.empty:
-                df_v_2026["TOTAL"] = pd.to_numeric(df_v_2026["TOTAL"], errors="coerce").fillna(0)
-                df_grp_2026 = (
-                    df_v_2026.groupby("Codigo de Producto")["TOTAL"]
-                    .sum()
-                    .reset_index()
-                    .sort_values(by="TOTAL", ascending=False)
-                    .reset_index(drop=True)
-                )
-                total_acumulado_2026 = df_grp_2026["TOTAL"].sum()
+                df_grp_2026 = df_v_2026.groupby("Codigo de Producto")["TOTAL_num"].sum().reset_index().sort_values(by="TOTAL_num", ascending=False).reset_index(drop=True)
+                total_acumulado_2026 = df_grp_2026["TOTAL_num"].sum()
                 if total_acumulado_2026 > 0:
-                    df_grp_2026["Pct_Part"] = df_grp_2026["TOTAL"] / total_acumulado_2026
-                    df_grp_2026["Pct_Acum"] = df_grp_2026["Pct_Part"].cumsum()
+                    df_grp_2026["Pct_Acum"] = (df_grp_2026["TOTAL_num"] / total_acumulado_2026).cumsum()
                 else:
-                    df_grp_2026["Pct_Part"] = 0.0
                     df_grp_2026["Pct_Acum"] = 0.0
             else:
-                df_grp_2026 = pd.DataFrame(columns=["Codigo de Producto", "TOTAL", "Pct_Part", "Pct_Acum"])
+                df_grp_2026 = pd.DataFrame(columns=["Codigo de Producto", "TOTAL_num", "Pct_Acum"])
 
             prods_2026_ordenados = df_grp_2026["Codigo de Producto"].tolist()
             prods_resto = [p for p in df_v_cl["Codigo de Producto"].unique() if p not in prods_2026_ordenados]
             prods_hist = prods_2026_ordenados + prods_resto
 
-            for idx, cod_prod in enumerate(prods_hist, 1):
-                v_prod_match = df_v_cl[df_v_cl["Codigo de Producto"] == cod_prod]
-                desc_prod = v_prod_match.iloc[0]["DESCRIPCIÓN"] if not v_prod_match.empty and "DESCRIPCIÓN" in v_prod_match.columns and pd.notna(v_prod_match.iloc[0]["DESCRIPCIÓN"]) else ""
+            dict_pct_acum = df_grp_2026.set_index("Codigo de Producto")["Pct_Acum"].to_dict()
+            primer_prod_2026 = prods_2026_ordenados[0] if prods_2026_ordenados else None
 
-                m_match = df_marcas[df_marcas["Codigo de Producto"] == cod_prod]
-                marca_prod = m_match.iloc[0]["Marca"] if not m_match.empty and pd.notna(m_match.iloc[0]["Marca"]) else "SIN MARCA"
+            for cod_prod in prods_hist:
+                desc_prod = mapa_descripciones.get(cod_prod, "")
+                marca_prod = mapa_marcas.get(cod_prod, "SIN MARCA")
 
-                m_2026 = df_grp_2026[df_grp_2026["Codigo de Producto"] == cod_prod]
-                if not m_2026.empty:
-                    pct_acum = m_2026.iloc[0]["Pct_Acum"]
-                    es_80_20 = (pct_acum <= 0.80001) or (m_2026.index[0] == 0)
+                if cod_prod in dict_pct_acum:
+                    pct_acum = dict_pct_acum[cod_prod]
+                    es_80_20 = (pct_acum <= 0.80001) or (cod_prod == primer_prod_2026)
                 else:
                     es_80_20 = False
 
                 total_meses_eval = max(1, mes_actual)
-                df_v_ene_fecha = df_v_cl[
-                    (df_v_cl["Codigo de Producto"] == cod_prod) & 
-                    (df_v_cl["Año"] == anio_actual) & 
-                    (df_v_cl["Mes"] >= 1) & 
-                    (df_v_cl["Mes"] <= mes_actual)
-                ].copy()
-                
-                if not df_v_ene_fecha.empty:
-                    df_v_ene_fecha[col_cant_v] = pd.to_numeric(df_v_ene_fecha[col_cant_v], errors="coerce").fillna(0)
-                    meses_con_venta = df_v_ene_fecha[df_v_ene_fecha[col_cant_v] > 0]["Mes"].nunique()
-                else:
-                    meses_con_venta = 0
-                
+                meses_con_venta = meses_con_venta_series.get((id_cl, cod_prod), 0)
                 cumple_60_pct = (meses_con_venta / total_meses_eval) >= 0.60
 
-                v_aa = pd.to_numeric(df_ventas[(df_ventas["ID_Cliente"] == id_cl) & (df_ventas["Codigo de Producto"] == cod_prod) & (df_ventas["Año"] == (anio_actual - 1)) & (df_ventas["Mes"] == mes_actual)][col_cant_v], errors="coerce").fillna(0).sum()
-                v_m3 = pd.to_numeric(df_ventas[(df_ventas["ID_Cliente"] == id_cl) & (df_ventas["Codigo de Producto"] == cod_prod) & (df_ventas["Año"] == a_m3) & (df_ventas["Mes"] == m_m3)][col_cant_v], errors="coerce").fillna(0).sum()
-                v_m2 = pd.to_numeric(df_ventas[(df_ventas["ID_Cliente"] == id_cl) & (df_ventas["Codigo de Producto"] == cod_prod) & (df_ventas["Año"] == a_m2) & (df_ventas["Mes"] == m_m2)][col_cant_v], errors="coerce").fillna(0).sum()
-                v_m1 = pd.to_numeric(df_ventas[(df_ventas["ID_Cliente"] == id_cl) & (df_ventas["Codigo de Producto"] == cod_prod) & (df_ventas["Año"] == a_m1) & (df_ventas["Mes"] == m_m1)][col_cant_v], errors="coerce").fillna(0).sum()
+                v_aa = df_v_aa.get((id_cl, cod_prod), 0.0)
+                v_m3 = df_v_m3.get((id_cl, cod_prod), 0.0)
+                v_m2 = df_v_m2.get((id_cl, cod_prod), 0.0)
+                v_m1 = df_v_m1.get((id_cl, cod_prod), 0.0)
 
-                col_dem_qty = "Incoming Orders Qty" if "Incoming Orders Qty" in df_demanda.columns else ("TOTAL" if "TOTAL" in df_demanda.columns else None)
-                dem_fecha = pd.to_numeric(df_demanda[(df_demanda["ID_Cliente"] == id_cl) & (df_demanda["Codigo de Producto"] == cod_prod) & (df_demanda["Año"] == anio_actual) & (df_demanda["Mes"] == mes_actual)][col_dem_qty], errors="coerce").fillna(0).sum() if col_dem_qty else 0
+                dem_fecha = df_dem_act.get((id_cl, cod_prod), 0.0)
 
                 sugerido_base = (v_aa * 0.40) + (v_m1 * 0.30) + (v_m2 * 0.20) + (v_m3 * 0.10)
                 sugerido_final = max(0, int(round(sugerido_base)))
 
                 avance = dem_fecha - sugerido_final
-
                 pct_avance = (dem_fecha / sugerido_final * 100) if sugerido_final > 0 else (100.0 if dem_fecha > 0 else 0.0)
                 indicador = "🔴 😢" if pct_avance < 50 else ("🟡 😐" if pct_avance < 95 else "🟢 😊")
 
-                v_historico = df_ventas[(df_ventas["ID_Cliente"] == id_cl) & (df_ventas["Codigo de Producto"] == cod_prod) & (pd.to_numeric(df_ventas[col_cant_v], errors="coerce") >= 1)]
-                if not v_historico.empty and "Fecha_dt" in v_historico.columns:
-                    v_historico_validas = v_historico.dropna(subset=["Fecha_dt"])
-                    if not v_historico_validas.empty:
-                        max_fecha = v_historico_validas["Fecha_dt"].max()
-                        u_mes_anio_str = max_fecha.strftime("%m/%Y")
-                    else:
-                        u_mes_anio_str = "-"
-                else:
-                    u_mes_anio_str = "-"
+                max_fecha = u_mes_series.get((id_cl, cod_prod), None)
+                u_mes_anio_str = max_fecha.strftime("%m/%Y") if pd.notna(max_fecha) else "-"
 
                 item_pedido = {
                     "Marca": marca_prod,
@@ -759,16 +754,9 @@ def procesar_pedido_sugerido(
                     registros_recuperar_20.append(item_pedido)
 
             prods_comprados = set(prods_hist)
-            prods_top = set()
-            if "Codigo de Producto" in df_ranking.columns and not df_ranking.empty:
-                prods_top = set(df_ranking["Codigo de Producto"].dropna().head(50).unique())
-
             for p_op in prods_top - prods_comprados:
-                rk_op_match = df_ranking[df_ranking["Codigo de Producto"] == p_op]
-                desc_op = rk_op_match.iloc[0]["Descripción"] if not rk_op_match.empty and "Descripción" in rk_op_match.columns else ""
-                
-                m_op_match = df_marcas[df_marcas["Codigo de Producto"] == p_op]
-                marca_op = m_op_match.iloc[0]["Marca"] if not m_op_match.empty and pd.notna(m_op_match.iloc[0]["Marca"]) else "SIN MARCA"
+                desc_op = mapa_descripciones.get(p_op, "")
+                marca_op = mapa_marcas.get(p_op, "SIN MARCA")
 
                 registros_oportunidades.append({
                     "Marca": marca_op,
