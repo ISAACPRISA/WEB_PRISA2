@@ -147,6 +147,19 @@ def homologar_columna_vendedor(df):
         df["ID_Vendedor"] = df["ID_Vendedor"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     return df
 
+def homologar_columna_estatus(df):
+    if df is None:
+        return None
+    for col in df.columns:
+        if re.search(r"^estatus$|^status$|^estatus[_\s]*cliente$", col, re.IGNORECASE):
+            df.rename(columns={col: "Estatus"}, inplace=True)
+            break
+    if "Estatus" in df.columns:
+        df["Estatus"] = df["Estatus"].fillna("VIGENTE").astype(str).str.strip().str.upper()
+    else:
+        df["Estatus"] = "VIGENTE"
+    return df
+
 # =============================================================================
 # 1. PROCESAMIENTO DE DATOS MAESTROS
 # =============================================================================
@@ -159,6 +172,7 @@ def procesar_datos_maestros(file_clientes, file_vendedores):
     
     df_clientes = homologar_columna_cliente(df_clientes)
     df_clientes = homologar_columna_vendedor(df_clientes)
+    df_clientes = homologar_columna_estatus(df_clientes)
     df_vendedores = homologar_columna_vendedor(df_vendedores)
 
     if 'Nombre' in df_vendedores.columns:
@@ -268,6 +282,7 @@ def generar_agenda_dinamica(vendedor_id, df_clientes, df_vendedores, anio, mes):
         frecuencia_val = d.get('Frecuencia de visita', 1)
         frecuencia = int(frecuencia_val) if pd.notna(frecuencia_val) else 1
         domicilio_original = d.get('Domicilio', 'Sin Domicilio Registrado')
+        estatus_original = d.get('Estatus', 'VIGENTE')
         
         for f in range(1, frecuencia + 1):
             semana_objetivo = None
@@ -279,6 +294,7 @@ def generar_agenda_dinamica(vendedor_id, df_clientes, df_vendedores, anio, mes):
             pool_visitas.append({
                 **d, 
                 "Domicilio": str(domicilio_original).strip(), 
+                "Estatus": str(estatus_original).strip().upper(),
                 "UID_Visita": f"{d['ID_Cliente']}_F{f}_{frecuencia}", 
                 "Semana_Restriccion": semana_objetivo
             })
@@ -360,6 +376,7 @@ def generar_agenda_dinamica(vendedor_id, df_clientes, df_vendedores, anio, mes):
                 "ID_Cliente": str(proximo_cliente['ID_Cliente']).strip(),
                 "Cliente": proximo_cliente['Cliente'],
                 "Domicilio": proximo_cliente.get('Domicilio', 'Sin Domicilio Encontrado'), 
+                "Estatus": proximo_cliente.get('Estatus', 'VIGENTE'),
                 "Clasificación ABC": proximo_cliente.get('Clasificacion', 'C'),
                 "Secuencia Frecuencia": "",  
                 "Venta_Mensual_Calculada": proximo_cliente.get('Venta_Mensual_Calculada', 0.0),
@@ -384,7 +401,7 @@ def generar_agenda_dinamica(vendedor_id, df_clientes, df_vendedores, anio, mes):
                 
                 agenda_mensual.append({
                     "Fecha_Raw": fecha_actual_dt, "Día del Mes": f"{nombre_mes_str} Día {dia_idx}", "Orden Visita": orden_visita,
-                    "ID_Cliente": "-", "Cliente": "☕ HORA DE COMIDA (JORNADA)", "Domicilio": "-", "Clasificación ABC": "-", "Secuencia Frecuencia": "-",
+                    "ID_Cliente": "-", "Cliente": "☕ HORA DE COMIDA (JORNADA)", "Domicilio": "-", "Estatus": "-", "Clasificación ABC": "-", "Secuencia Frecuencia": "-",
                     "Venta_Mensual_Calculada": 0.0, "Hora de llegada al punto": hora_inicio_comida.strftime("%I:%M %p"), "Tiempo de visita": "1 HORA",
                     "Hora de Salida": hora_fin_comida.strftime("%I:%M %p"), "Tiempo de trayecto a próximo cliente": "10 MIN", "Kilómetros a próximo cliente": "-",
                     "Latitud": proximo_cliente['Latitud'], "Longitud": proximo_cliente['Longitud'], "Métrica_Km_Día": 0.0, "Métrica_Min_Día": 0.0, "Es_Mapa": False
@@ -477,7 +494,7 @@ def generar_reporte_pdf(res_dict, cliente_sel, mes_nombre, anio):
             continue
 
         data_tabla = []
-        cols = ["Marca", "Código de Producto", "DESCRIPCIÓN", "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"]
+        cols = ["Estatus", "Marca", "Código de Producto", "DESCRIPCIÓN", "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"]
         
         header_row = [Paragraph(f"<b>{c}</b>", cell_header_style) for c in cols]
         data_tabla.append(header_row)
@@ -489,7 +506,7 @@ def generar_reporte_pdf(res_dict, cliente_sel, mes_nombre, anio):
                 row_data.append(Paragraph(val, cell_style))
             data_tabla.append(row_data)
 
-        tabla = Table(data_tabla, colWidths=[90, 80, 260, 50, 50, 60, 90], repeatRows=1)
+        tabla = Table(data_tabla, colWidths=[70, 80, 75, 235, 45, 45, 55, 80], repeatRows=1)
         tabla.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#FF4B4B')),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
@@ -517,7 +534,8 @@ def procesar_pedido_sugerido(
     f_demanda,
     f_master,
     cliente_id_seleccionado=None,
-    df_cat_clientes=None
+    df_cat_clientes=None,
+    estatus_filtro=None
 ):
     try:
         df_master = cargar_dataframe_flexible(f_master, "MASTER DE CLIENTES.xlsx")
@@ -556,6 +574,7 @@ def procesar_pedido_sugerido(
 
         df_master = homologar_columna_cliente(df_master)
         df_master = homologar_columna_vendedor(df_master)
+        df_master = homologar_columna_estatus(df_master)
 
         df_ventas = homologar_columna_cliente(df_ventas)
         df_ventas = homologar_columna_vendedor(df_ventas)
@@ -605,23 +624,40 @@ def procesar_pedido_sugerido(
                     id_sel_clean = str(cliente_id_seleccionado).split("-")[0].strip()
                     df_v_cat = df_v_cat[df_v_cat["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True) == id_sel_clean]
 
+                cols_cl = ["ID_Cliente"]
                 if "Cliente" in df_v_cat.columns:
-                    clientes_dia = df_v_cat[["ID_Cliente", "Cliente"]].drop_duplicates()
+                    cols_cl.append("Cliente")
                 elif "Nombre_Cliente" in df_v_cat.columns:
-                    clientes_dia = df_v_cat[["ID_Cliente", "Nombre_Cliente"]].rename(columns={"Nombre_Cliente": "Cliente"}).drop_duplicates()
+                    df_v_cat.rename(columns={"Nombre_Cliente": "Cliente"}, inplace=True)
+                    cols_cl.append("Cliente")
                 else:
-                    clientes_dia = df_v_cat[["ID_Cliente"]].copy()
-                    clientes_dia["Cliente"] = clientes_dia["ID_Cliente"]
-                    clientes_dia = clientes_dia.drop_duplicates()
+                    df_v_cat["Cliente"] = df_v_cat["ID_Cliente"]
+                    cols_cl.append("Cliente")
+
+                if "Estatus" in df_v_cat.columns:
+                    cols_cl.append("Estatus")
+
+                clientes_dia = df_v_cat[cols_cl].drop_duplicates(subset=["ID_Cliente"])
             else:
-                clientes_dia = pd.DataFrame(columns=["ID_Cliente", "Cliente"])
+                clientes_dia = pd.DataFrame(columns=["ID_Cliente", "Cliente", "Estatus"])
         else:
-            clientes_dia = df_agenda_eval[["ID_Cliente", "Cliente"]].drop_duplicates()
+            cols_agenda = [c for c in ["ID_Cliente", "Cliente", "Estatus"] if c in df_agenda_eval.columns]
+            clientes_dia = df_agenda_eval[cols_agenda].drop_duplicates(subset=["ID_Cliente"])
 
         clientes_dia["ID_Cliente"] = clientes_dia["ID_Cliente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
 
+        if "Estatus" not in clientes_dia.columns or clientes_dia["Estatus"].isnull().all():
+            dict_estatus = df_master.set_index("ID_Cliente")["Estatus"].to_dict() if "Estatus" in df_master.columns else {}
+            clientes_dia["Estatus"] = clientes_dia["ID_Cliente"].map(dict_estatus).fillna("VIGENTE")
+
+        clientes_dia["Estatus"] = clientes_dia["Estatus"].astype(str).str.strip().str.upper()
+
+        if estatus_filtro:
+            estatus_filtro_upper = [e.upper() for e in estatus_filtro]
+            clientes_dia = clientes_dia[clientes_dia["Estatus"].isin(estatus_filtro_upper)].reset_index(drop=True)
+
         if clientes_dia.empty:
-            return None, "No hay clientes agendados ni registrados para evaluar con el vendedor seleccionado.", None
+            return None, "No hay clientes que coincidan con la selección de estatus o agenda para evaluar.", None
 
         df_ranking.columns = df_ranking.columns.astype(str).str.strip()
         df_ranking = desduplicar_columnas(df_ranking)
@@ -684,6 +720,7 @@ def procesar_pedido_sugerido(
 
         for _, cl_row in clientes_dia.iterrows():
             id_cl, nombre_cl = cl_row["ID_Cliente"], cl_row["Cliente"]
+            estatus_cl = cl_row.get("Estatus", "VIGENTE")
 
             df_v_cl = df_ventas[df_ventas["ID_Cliente"] == id_cl].copy()
             if df_v_cl.empty:
@@ -771,6 +808,7 @@ def procesar_pedido_sugerido(
                     u_mes_anio_str = "-"
 
                 item_pedido = {
+                    "Estatus": estatus_cl,
                     "Marca": marca_prod,
                     "Código de Producto": cod_prod,
                     "DESCRIPCIÓN": desc_prod,
@@ -801,6 +839,7 @@ def procesar_pedido_sugerido(
                 marca_op = m_op_match.iloc[0]["Marca"] if not m_op_match.empty and pd.notna(m_op_match.iloc[0]["Marca"]) else "SIN MARCA"
 
                 registros_oportunidades.append({
+                    "Estatus": estatus_cl,
                     "Marca": marca_op,
                     "Código de Producto": p_op,
                     "DESCRIPCIÓN": desc_op,
@@ -811,7 +850,7 @@ def procesar_pedido_sugerido(
                 })
 
         cols_visibles = [
-            "Marca", "Código de Producto", "DESCRIPCIÓN",
+            "Estatus", "Marca", "Código de Producto", "DESCRIPCIÓN",
             "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"
         ]
 
@@ -819,7 +858,7 @@ def procesar_pedido_sugerido(
             if not lista_registros:
                 return pd.DataFrame(columns=cols_visibles)
             df = pd.DataFrame(lista_registros).reindex(columns=cols_visibles)
-            return df.sort_values(by=["Marca", "Código de Producto"]).reset_index(drop=True)
+            return df.sort_values(by=["Estatus", "Marca", "Código de Producto"]).reset_index(drop=True)
 
         df_8020 = preparar_df_agrupado(registros_sugerido_8020)
         df_intermitente = preparar_df_agrupado(registros_intermitente)
@@ -975,7 +1014,7 @@ if df_cl is not None and df_vn is not None:
                     df_resumen_formato = df_resumen_cliente.copy()
                     df_resumen_formato['Venta_Mensual_Calculada'] = df_resumen_formato['Venta_Mensual_Calculada'].map("${:,.2f}".format)
                     st.dataframe(
-                        df_resumen_formato[['Día del Mes', 'Orden Visita', 'ID_Cliente', 'Cliente', 'Domicilio', 'Clasificación ABC', 'Secuencia Frecuencia', 'Hora de llegada al punto', 'Tiempo de visita', 'Hora de Salida', 'Tiempo de trayecto a próximo cliente', 'Kilómetros a próximo cliente', 'Venta_Mensual_Calculada']], 
+                        df_resumen_formato[['Día del Mes', 'Orden Visita', 'ID_Cliente', 'Cliente', 'Domicilio', 'Estatus', 'Clasificación ABC', 'Secuencia Frecuencia', 'Hora de llegada al punto', 'Tiempo de visita', 'Hora de Salida', 'Tiempo de trayecto a próximo cliente', 'Kilómetros a próximo cliente', 'Venta_Mensual_Calculada']], 
                         use_container_width=True, hide_index=True
                     )
                     
@@ -1025,13 +1064,13 @@ if df_cl is not None and df_vn is not None:
                     df_prospectos_radio_2km = df_p_temp.iloc[indices_prospectos_validos].reset_index(drop=True)
 
                 fila_inicio = pd.DataFrame([{
-                    "Orden Visita": 0, "ID_Cliente": "-", "Cliente": "Salida de Base Logística", "Domicilio": "-",
+                    "Orden Visita": 0, "ID_Cliente": "-", "Cliente": "Salida de Base Logística", "Domicilio": "-", "Estatus": "-",
                     "Clasificación ABC": "-", "Secuencia Frecuencia": "-", "Venta_Mensual_Calculada": 0.0, 
                     "Hora de llegada al punto": "08:30 AM", "Tiempo de visita": "-", "Hora de Salida": "08:30 AM",
                     "Tiempo de trayecto a próximo cliente": "-", "Kilómetros a próximo cliente": "-"
                 }])
                 fila_regreso = pd.DataFrame([{
-                    "Orden Visita": 99, "ID_Cliente": "-", "Cliente": "Regreso a Base Logística", "Domicilio": "-",
+                    "Orden Visita": 99, "ID_Cliente": "-", "Cliente": "Regreso a Base Logística", "Domicilio": "-", "Estatus": "-",
                     "Clasificación ABC": "-", "Secuencia Frecuencia": "-", "Venta_Mensual_Calculada": 0.0, 
                     "Hora de llegada al punto": "05:30 PM", "Tiempo de visita": "-", "Hora de Salida": "05:30 PM",
                     "Tiempo de trayecto a próximo cliente": "-", "Kilómetros a próximo cliente": "-"
@@ -1040,7 +1079,7 @@ if df_cl is not None and df_vn is not None:
                 if es_dia_vacio:
                     df_tabla_mostrar = pd.concat([fila_inicio, fila_regreso], ignore_index=True)
                 else:
-                    df_format_tabla = df_dia_filtrado[['Orden Visita', 'ID_Cliente', 'Cliente', 'Domicilio', 'Clasificación ABC', 'Secuencia Frecuencia', 'Venta_Mensual_Calculada', 'Hora de llegada al punto', 'Tiempo de visita', 'Hora de Salida', 'Tiempo de trayecto a próximo cliente', 'Kilómetros a próximo cliente']]
+                    df_format_tabla = df_dia_filtrado[['Orden Visita', 'ID_Cliente', 'Cliente', 'Domicilio', 'Estatus', 'Clasificación ABC', 'Secuencia Frecuencia', 'Venta_Mensual_Calculada', 'Hora de llegada al punto', 'Tiempo de visita', 'Hora de Salida', 'Tiempo de trayecto a próximo cliente', 'Kilómetros a próximo cliente']]
                     df_tabla_mostrar = pd.concat([fila_inicio, df_format_tabla, fila_regreso], ignore_index=True)
                 
                 df_tabla_mostrar['Venta_Mensual_Calculada'] = df_tabla_mostrar['Venta_Mensual_Calculada'].map("${:,.2f}".format)
@@ -1049,7 +1088,7 @@ if df_cl is not None and df_vn is not None:
                 with col1:
                     st.subheader(f"📋 Agenda Diaria: {dia_seleccionado_str}")
                     seleccion_tabla = st.dataframe(
-                        df_tabla_mostrar[['Orden Visita', 'ID_Cliente', 'Cliente', 'Domicilio', 'Clasificación ABC', 'Secuencia Frecuencia', 'Hora de llegada al punto', 'Tiempo de visita', 'Hora de Salida', 'Tiempo de trayecto a próximo cliente', 'Kilómetros a próximo cliente', 'Venta_Mensual_Calculada']], 
+                        df_tabla_mostrar[['Orden Visita', 'ID_Cliente', 'Cliente', 'Domicilio', 'Estatus', 'Clasificación ABC', 'Secuencia Frecuencia', 'Hora de llegada al punto', 'Tiempo de visita', 'Hora de Salida', 'Tiempo de trayecto a próximo cliente', 'Kilómetros a próximo cliente', 'Venta_Mensual_Calculada']], 
                         height=540, use_container_width=True, hide_index=True,
                         on_select="rerun", selection_mode="single-row"
                     )
@@ -1150,7 +1189,7 @@ if df_cl is not None and df_vn is not None:
             df_mensual_formato = df_agenda_mes.copy()
             df_mensual_formato['Venta_Mensual_Calculada'] = df_mensual_formato['Venta_Mensual_Calculada'].map("${:,.2f}".format)
             st.dataframe(
-                df_mensual_formato[['Día del Mes', 'Orden Visita', 'ID_Cliente', 'Cliente', 'Domicilio', 'Clasificación ABC', 'Secuencia Frecuencia', 'Hora de llegada al punto', 'Tiempo de visita', 'Hora de Salida', 'Tiempo de trayecto a próximo cliente', 'Kilómetros a próximo cliente', 'Venta_Mensual_Calculada']], 
+                df_mensual_formato[['Día del Mes', 'Orden Visita', 'ID_Cliente', 'Cliente', 'Domicilio', 'Estatus', 'Clasificación ABC', 'Secuencia Frecuencia', 'Hora de llegada al punto', 'Tiempo de visita', 'Hora de Salida', 'Tiempo de trayecto a próximo cliente', 'Kilómetros a próximo cliente', 'Venta_Mensual_Calculada']], 
                 height=400, use_container_width=True, hide_index=True
             )
 
@@ -1168,10 +1207,10 @@ if df_cl is not None and df_vn is not None:
     with tab_sugerido:
         st.header("📊 Módulo de Pedido Sugerido por Marca")
 
-        c_sug1, c_sug2, c_sug3 = st.columns([0.3, 0.2, 0.5])
+        c_sug1, c_sug2, c_sug3, c_sug4 = st.columns([0.2, 0.15, 0.25, 0.4])
         with c_sug1:
             mes_eval_tupla = st.selectbox(
-                "Seleccione Mes para evaluar Pedido Sugerido:",
+                "Seleccione Mes para evaluar:",
                 lista_meses,
                 index=mes_numerico - 1,
                 format_func=lambda x: x[0],
@@ -1181,10 +1220,18 @@ if df_cl is not None and df_vn is not None:
 
         with c_sug2:
             anio_eval_num = st.selectbox(
-                "Año a evaluar:",
+                "Año:",
                 lista_anios,
                 index=lista_anios.index(anio_seleccionado) if anio_seleccionado in lista_anios else 0,
                 key="anio_sug_input_independiente"
+            )
+
+        with c_sug3:
+            estatus_seleccionados = st.multiselect(
+                "Filtrar por Estatus de Cliente:",
+                options=["VIGENTE", "DESARROLLO", "INACTIVO"],
+                default=["VIGENTE", "DESARROLLO", "INACTIVO"],
+                key="filtro_estatus_sugerido"
             )
 
         # ---------------------------------------------------------------------
@@ -1213,7 +1260,7 @@ if df_cl is not None and df_vn is not None:
                     nom = r_cl[col_nombre_cl] if col_nombre_cl and pd.notna(r_cl[col_nombre_cl]) else r_cl["ID_Cliente"]
                     opciones_clientes.append(f"{r_cl['ID_Cliente']} - {nom}")
 
-        with c_sug3:
+        with c_sug4:
             cliente_sel_sug = st.selectbox(
                 f"Seleccione Cliente Agendado en {mes_eval_tupla[0]} (o Evalúe Todos):", 
                 ["TODOS"] + sorted(opciones_clientes),
@@ -1240,7 +1287,8 @@ if df_cl is not None and df_vn is not None:
                 f_demanda=URL_DEMANDA,
                 f_master=URL_MASTER_CLIENTES,
                 cliente_id_seleccionado=cl_id_pass,
-                df_cat_clientes=df_cl
+                df_cat_clientes=df_cl,
+                estatus_filtro=estatus_seleccionados
             )
 
             if err_msg:
@@ -1274,6 +1322,7 @@ if df_cl is not None and df_vn is not None:
                 )
 
             config_cols_sugerido = {
+                "Estatus": st.column_config.TextColumn("Estatus", width="small"),
                 "Marca": st.column_config.TextColumn("Marca", width="medium"),
                 "Código de Producto": st.column_config.TextColumn("Código de Producto", width="small"),
                 "DESCRIPCIÓN": st.column_config.TextColumn("DESCRIPCIÓN", width="large"),
@@ -1284,7 +1333,7 @@ if df_cl is not None and df_vn is not None:
             }
 
             cols_visibles = [
-                "Marca", "Código de Producto", "DESCRIPCIÓN", 
+                "Estatus", "Marca", "Código de Producto", "DESCRIPCIÓN", 
                 "Sugerido", "Avance", "Indicador", "Ultimo mes de Venta"
             ]
 
